@@ -838,6 +838,34 @@ while true; do
     cycle_log="$LOG_DIR/cycle-$(printf '%04d' "$loop_count")-$(date '+%Y%m%d-%H%M%S').log"
 
     log_cycle "$loop_count" "START" "Beginning work cycle"
+
+    # Ledger preflight — INTO THIS LOG, not into a hook.
+    #
+    # Munger, Cycle 7 integrity ruling §3.1, granted as the single exception to
+    # his freeze on instrument work: "A control must not depend on a file the
+    # runtime says it is ignoring."
+    #
+    # The preflight was first wired to `SessionStart` in `.claude/settings.json`.
+    # That file is untrusted in this workspace — `hasTrustDialogAccepted: false`,
+    # and every cycle since 09:58 has logged "Ignoring 7 permissions.allow
+    # entries from .claude/settings.json: this workspace has not been trusted"
+    # (6 occurrences). So the control built to detect unexecuted controls was
+    # itself installed somewhere its execution could not be observed — the eighth
+    # instance of the method lesson, committed twenty minutes after writing down
+    # the seventh.
+    #
+    # Here it leaves a line in auto-loop.log, which is an artifact that outlives
+    # the cycle and can be grepped. The settings.json hook is kept as a redundant
+    # path for interactive sessions started outside this loop; it is a bonus, not
+    # the control.
+    if [ -x "$SCRIPT_DIR/ledger-preflight.sh" ]; then
+        while IFS= read -r preflight_line; do
+            [ -n "$preflight_line" ] || continue
+            log_cycle "$loop_count" "PREFLIGHT" "$preflight_line"
+        done < <("$SCRIPT_DIR/ledger-preflight.sh" 2>&1 | grep -E '^(🔴|- |✅)' || true)
+    else
+        log_cycle "$loop_count" "PREFLIGHT-FAIL" "ledger-preflight.sh missing or not executable"
+    fi
     save_state "running"
 
     # Log rotation
