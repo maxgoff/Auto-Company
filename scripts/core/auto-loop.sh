@@ -716,6 +716,72 @@ echo $$ > "$PID_FILE"
 # Trap signals for graceful shutdown
 trap cleanup SIGTERM SIGINT SIGHUP
 
+# ------------------------------------------------------------------
+# Source-drift guard — the defect that made every other Ledger fix inert
+# ------------------------------------------------------------------
+# Found 2026-07-25 (Cycle 7) by grepping the loop's own log instead of trusting
+# the loop's own story:
+#
+#     $ grep -c "LEDGER" logs/auto-loop.log
+#     0
+#
+# `run_ledger` logs a LEDGER line on success and a LEDGER-FAIL line on failure,
+# so it has exactly two possible outcomes and neither had ever been written.
+# The "No exit without a row" invariant — the one two binding rulings and every
+# NO-PROGRESS streak in this company's history rest on — HAD NEVER RUN, NOT ONCE.
+#
+# Why: this daemon started at 09:58:12. `run_ledger` was added to this file at
+# 11:09 (commit 6240aa0) and patched again at 12:06 (commit 6f4626f). Bash reads
+# a script incrementally from an open file descriptor and never re-parses what it
+# has already consumed, so a long-running daemon executes the bytes that were on
+# disk when it started, forever. Every Ledger row in `memories/ledger.jsonl` was
+# hand-invoked by an agent inside a cycle. The loop contributed nothing.
+#
+# The consequence is worse than the missing rows. Cycle 5 diagnosed "a cycle that
+# ends without invoking ledger.sh leaves no stamp" and shipped a fix to the
+# usage-limit branch — a fix that, being in this file, was also dead on arrival.
+# The company spent a cycle repairing a mechanism it could not observe, and then
+# wrote binding rulings that assumed the repair had taken.
+#
+# So: fingerprint this file at startup, and re-exec when it changes. Any future
+# fix to this loop now takes effect within one cycle instead of at the next
+# reboot. A self-modifying daemon that cannot notice it was modified is not a
+# control; it is a script that happens to still be running.
+SELF_PATH="$SCRIPT_DIR/$(basename "$0")"
+[ -f "$SELF_PATH" ] || SELF_PATH="$0"
+readonly SELF_ARGS=("$@")
+
+fingerprint_self() {
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$SELF_PATH" 2>/dev/null | awk '{print $1}'
+    elif command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$SELF_PATH" 2>/dev/null | awk '{print $1}'
+    else
+        # No hasher anywhere is survivable — size+mtime still catches real edits.
+        wc -c < "$SELF_PATH" 2>/dev/null | tr -d ' '
+    fi
+}
+
+SELF_FINGERPRINT="$(fingerprint_self)"
+
+# Re-exec if this file changed on disk since we started reading it.
+#
+# Called at the TOP of the loop, never mid-cycle: re-execing while an engine is
+# running would orphan it, and an orphaned engine writing to this working tree is
+# the failure `kill_engine_stragglers` exists to clean up. At the top of the loop
+# there is no child to orphan.
+reexec_if_source_changed() {
+    local now
+    now="$(fingerprint_self)"
+    [ -n "$now" ] || return 0
+    [ "$now" != "$SELF_FINGERPRINT" ] || return 0
+
+    log "Source changed on disk (${SELF_FINGERPRINT:0:12} -> ${now:0:12}). Re-executing so the fix actually runs."
+    save_state "reexec"
+    rm -f "$PID_FILE"
+    exec /bin/bash "$SELF_PATH" ${SELF_ARGS+"${SELF_ARGS[@]}"}
+}
+
 # Initialize counters
 loop_count=0
 error_count=0
@@ -761,6 +827,12 @@ while true; do
         log "Stop requested. Shutting down gracefully."
         cleanup
     fi
+
+    # Pick up edits to this file before starting a cycle. See the long comment on
+    # `reexec_if_source_changed` — without this, a fix to the loop takes effect
+    # only when the machine reboots, and the loop keeps reporting that it is
+    # enforcing invariants whose code it is not running.
+    reexec_if_source_changed
 
     loop_count=$((loop_count + 1))
     cycle_log="$LOG_DIR/cycle-$(printf '%04d' "$loop_count")-$(date '+%Y%m%d-%H%M%S').log"
