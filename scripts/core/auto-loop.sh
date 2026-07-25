@@ -849,6 +849,29 @@ This is Cycle #$loop_count. Act decisively."
         # Check for usage limit
         if check_usage_limit "$OUTPUT"; then
             log_cycle "$loop_count" "LIMIT" "API usage limit detected. Waiting ${LIMIT_WAIT_SECONDS}s..."
+            # STAMP BEFORE THE `continue` — this branch used to skip the Ledger
+            # entirely and it is the only path in the loop that could.
+            #
+            # The comment on the `run_ledger` call at the bottom of this loop
+            # states the invariant: "Every cycle gets a Ledger row — including a
+            # failed one, because a cycle that crashed also moved no
+            # externally-generated number and the streak must reflect that
+            # honestly." This `continue` broke exactly that invariant, silently.
+            #
+            # Found 2026-07-25 (Cycle 5) by an off-by-one nobody had noticed:
+            # `memories/ledger.jsonl` held two rows where there should have been
+            # three. Cycle 4 ended without ever stamping, so the "streak: 2" that
+            # its consensus asserted — and that a STREAK WARNING and two binding
+            # rulings then repeated — was an agent's narrative that no script had
+            # ever produced. The company's own rule says a hand-written row is a
+            # governance violation; a hand-asserted streak is the same thing in
+            # prose.
+            #
+            # A missing stamp is worse than a NO-PROGRESS stamp. NO-PROGRESS is a
+            # measurement; silence is an absence that later reads as whatever the
+            # next cycle needs it to mean, and it permanently offsets every Ledger
+            # cycle number after it.
+            run_ledger || true
             save_state "waiting_limit"
             sleep "$LIMIT_WAIT_SECONDS"
             error_count=0
