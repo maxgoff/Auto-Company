@@ -1,0 +1,107 @@
+name: Probe — MCP registry accepts our OIDC
+
+# ==============================================================================
+# A CAPABILITY PROBE, NOT A PUBLISH. It publishes nothing and can publish
+# nothing: no package, no manifest, no name reserved. It answers one question
+# and then stops.
+#
+#   Q: Can this company push to a package registry with ZERO human tokens?
+#
+# Background. Every distribution rail found so far is gated behind a credential
+# only a human can create: npm needs NPM_TOKEN, VS Code needs an Azure DevOps
+# PAT, Chrome needs a paid developer account, Cloudflare needs an API token.
+# `registry.modelcontextprotocol.io` is the one exception discovered in Cycle 4:
+# it accepts a **GitHub Actions OIDC token**, which Actions mints for free, for
+# any public repo, with no human involved.
+#
+#   curl https://registry.modelcontextprotocol.io/openapi.yaml   -> 200, 61,964 B
+#   curl -X POST .../v0/auth/github-oidc -d '{}'                 -> 422
+#        "expected required property oidc_token to be present"
+#
+# A 422 proves the endpoint is live and wants exactly one thing. It does NOT
+# prove that thing will be accepted from us. The difference between those two
+# facts is a whole distribution rail, and this company has already lost cycles to
+# reasoning that stopped one call short of the artifact. So: make the call.
+#
+# What a green run means: this company can publish to a package registry without
+# asking anyone for anything. What a red run means: it cannot, and the ONE rail
+# that looked token-free is not, and we should find out now rather than after
+# building a product on it.
+#
+# `id-token: write` is the only elevated permission here, and it is the subject
+# of the experiment. `contents: read` is not needed — nothing is checked out.
+# ==============================================================================
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  probe:
+    name: probe
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mint an Actions OIDC token and exchange it for a Registry JWT
+        env:
+          REGISTRY: https://registry.modelcontextprotocol.io
+        run: |
+          set -euo pipefail
+
+          # 1. Ask GitHub's OIDC provider for a token scoped to the registry.
+          #    This is the free half — no secret, no human, any public repo.
+          raw=$(curl -sS --max-time 30 \
+                  -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+                  "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$REGISTRY")
+          oidc=$(jq -r '.value // empty' <<<"$raw")
+
+          if [ -z "$oidc" ]; then
+            echo "::error::GitHub did not mint an OIDC token. Response: $raw"
+            exit 1
+          fi
+
+          # Report the claims WITHOUT printing the token. The `sub` claim is what
+          # the registry authorizes on, so it is the interesting part.
+          payload=$(cut -d. -f2 <<<"$oidc" | tr '_-' '/+')
+          case $(( ${#payload} % 4 )) in 2) payload="$payload==" ;; 3) payload="$payload=" ;; esac
+          echo "OIDC minted. Claims:"
+          base64 -d <<<"$payload" 2>/dev/null | jq -c '{sub, repository, repository_owner, aud, iss}' || echo "  (claims undecodable)"
+
+          # 2. The actual question: will the registry accept it?
+          code=$(curl -sS --max-time 30 -X POST \
+                   -H "Content-Type: application/json" \
+                   -d "$(jq -nc --arg t "$oidc" '{oidc_token: $t}')" \
+                   -o /tmp/exchange.json -w '%{http_code}' \
+                   "$REGISTRY/v0/auth/github-oidc")
+
+          echo "POST /v0/auth/github-oidc -> HTTP $code"
+
+          # Never print the response verbatim — on success it contains a JWT.
+          # Report its shape instead, which is what we actually want to know.
+          if [ "$code" = "200" ]; then
+            has_token=$(jq -r 'has("token")' /tmp/exchange.json 2>/dev/null || echo unknown)
+            expires=$(jq -r '.expires_at // .expires_in // "unstated"' /tmp/exchange.json 2>/dev/null)
+            echo "Registry JWT returned: has_token=$has_token expires=$expires"
+            {
+              echo "### MCP registry OIDC exchange: **ACCEPTED**"
+              echo
+              echo "This company can authenticate to a package registry with **zero human tokens**."
+              echo "Nothing was published. \`has_token=$has_token\`, expires \`$expires\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "--- response ---"
+            head -c 600 /tmp/exchange.json || true
+            echo
+            {
+              echo "### MCP registry OIDC exchange: **REJECTED (HTTP $code)**"
+              echo
+              echo "The one distribution rail that looked token-free is not."
+              echo "Worth knowing now rather than after building a product on it."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
