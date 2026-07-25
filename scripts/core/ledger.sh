@@ -335,11 +335,36 @@ probe_gha() {
     if [ "$LEDGER_OFFLINE" = "1" ]; then LIVE_SRC="offline-mode"; return 0; fi
     command -v gh >/dev/null 2>&1 || { LIVE_SRC="none:gh-cli-missing"; return 0; }
 
-    local repo="${LEDGER_GH_REPO:-}"
+    # Which repo's Actions runs answer this question.
+    #
+    # It must be a repo we can PUSH to, which is not the same as the repo `git
+    # remote` happens to name. Found the hard way 2026-07-25: `origin` is
+    # `MaxMiksa/Auto-Company`, on which this company holds `viewerPermission:
+    # READ`. `git push` → 403. The verify workflow could never land there, so
+    # this probe would have reported `workflow-not-on-remote` forever while
+    # looking like a correctly-wired external source.
+    #
+    # So: walk every git remote and take the first one GitHub says we can push
+    # to. An explicit LEDGER_GH_REPO still wins, and a repo we cannot push to is
+    # still usable as a read-only fallback — better a stale external source than
+    # none — but it is recorded as `:ro` so the row says which kind it was.
+    local repo="${LEDGER_GH_REPO:-}" ro_repo="" cand slug rotag=""
     if [ -z "$repo" ]; then
-        repo=$( (cd "$PROJECT_DIR" && gh repo view --json nameWithOwner -q .nameWithOwner) 2>/dev/null || true)
+        for cand in $( (cd "$PROJECT_DIR" && git remote) 2>/dev/null); do
+            slug=$( (cd "$PROJECT_DIR" && git remote get-url "$cand") 2>/dev/null \
+                    | sed -E 's#^git@github\.com:#https://github.com/#; s#^https://[^/]*github\.com/##; s#\.git$##')
+            case "$slug" in */*) ;; *) continue ;; esac
+            if (cd "$PROJECT_DIR" && gh api "repos/$slug" -q .permissions.push) 2>/dev/null | grep -qx true; then
+                repo="$slug"; break
+            fi
+            [ -n "$ro_repo" ] || ro_repo="$slug"
+        done
     fi
-    [ -n "$repo" ] || { LIVE_SRC="none:gh-unreachable-or-unauthenticated"; return 0; }
+    if [ -z "$repo" ] && [ -n "$ro_repo" ]; then
+        repo="$ro_repo"
+        rotag="(read-only)"
+    fi
+    [ -n "$repo" ] || { LIVE_SRC="none:no-pushable-github-remote"; return 0; }
 
     # Reachability + auth confirmed before any 0 may be written.
     (cd "$PROJECT_DIR" && gh api "repos/$repo" -q .full_name) >/dev/null 2>&1 \
@@ -351,7 +376,7 @@ probe_gha() {
         # API is reachable; the workflow simply is not there. GitHub has never
         # verified anything, which is an externally-sourced zero, not unknown.
         LIVE=0
-        LIVE_SRC="gh-actions:workflow-not-on-remote:$LEDGER_GH_WORKFLOW"
+        LIVE_SRC="gh-actions:$repo$rotag:workflow-not-on-remote:$LEDGER_GH_WORKFLOW"
         return 0
     fi
 
@@ -359,7 +384,7 @@ probe_gha() {
     run_id=$(jq -r '[.[] | select(.status=="completed")] | sort_by(.createdAt) | last | .databaseId // empty' "$runs" 2>/dev/null || echo "")
     if [ -z "$run_id" ]; then
         LIVE=0
-        LIVE_SRC="gh-actions:no-completed-run"
+        LIVE_SRC="gh-actions:$repo$rotag:no-completed-run"
         return 0
     fi
     conclusion=$(jq -r --argjson id "$run_id" '[.[] | select(.databaseId==$id)] | first | .conclusion // "unknown"' "$runs")
