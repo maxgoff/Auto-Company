@@ -91,6 +91,10 @@ EVIDENCE_DIR="$STATE_DIR/evidence"
 LEDGER_NPM_PACKAGE="${LEDGER_NPM_PACKAGE:-}"
 LEDGER_NPM_PKG_JSON="${LEDGER_NPM_PKG_JSON:-}"
 LEDGER_GH_WORKFLOW="${LEDGER_GH_WORKFLOW:-ledger-verify-live.yml}"
+# The account whose published artifacts strangers would reference. Also the
+# account whose OWN repos must be excluded from the demand count — see
+# probe_demand(). Ours is the only one we can publish under.
+LEDGER_GH_OWNER="${LEDGER_GH_OWNER:-maxgoff}"
 LEDGER_D1_DB="${LEDGER_D1_DB:-snapog-db}"
 LEDGER_D1_DIR="${LEDGER_D1_DIR:-$PROJECT_DIR/projects/snapog}"
 LEDGER_POLAR_API="${LEDGER_POLAR_API:-https://api.polar.sh}"
@@ -176,6 +180,7 @@ PREV_CYCLE=$(prev_field cycle 0)
 PREV_COLLECTED=$(prev_field collected_cents null)
 PREV_EMBED=$(prev_field embed_domains null)
 PREV_LIVE=$(prev_field live_artifacts_verified null)
+PREV_DEPS=$(prev_field dependent_repos null)
 PREV_NPM=$(prev_field npm_published false)
 PREV_STREAK=$(prev_field streak 0)
 
@@ -307,7 +312,7 @@ probe_d1() {
     # our thing" means for it. Set LEDGER_EMBED_RETIRED=0 to re-enable the D1
     # query as-is.
     if [ "${LEDGER_EMBED_RETIRED:-1}" = "1" ]; then
-        EMBED_SRC="retired:snapog-archived-2026-07-25:no-successor-metric-yet"
+        EMBED_SRC="retired:snapog-archived-2026-07-25:superseded-by-dependent_repos"
         return 0
     fi
 
@@ -341,6 +346,111 @@ probe_d1() {
     esac
     EMBED="$n"
     EMBED_SRC="d1-distinct-foreign-apex"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# PROBE 2b — dependent_repos  <-  GitHub code search
+# ---------------------------------------------------------------------------
+# THE SUCCESSOR DEMAND METRIC. Installed 2026-07-25 (Cycle 5), answering the
+# standing Open Question left when `embed_domains` was retired with SnapOG:
+# *what does "distinct third parties using our thing" mean for this company now?*
+#
+# It means: **how many public repositories that are not ours reference something
+# we published, in a workflow file they chose to commit.**
+#
+#   GET /search/code?q=uses:<owner>/ path:.github/workflows
+#
+# Why this metric and not another:
+#
+#   - It is EXTERNALLY SOURCED in the strict sense the Ledger requires. GitHub
+#     indexes strangers' repositories; we cannot write to that index. The number
+#     is produced by other people's commits, not by our deploys.
+#   - It runs on the ONLY rail this company has. `embed_domains` needed a
+#     Cloudflare token; `npm_published` needs an npm token; `collected_cents`
+#     needs a payment token. This needs `gh`, which we already hold.
+#   - It is UNGAMEABLE BY SELF-USE. Repos owned by `$LEDGER_GH_OWNER` are
+#     filtered out below. Adding `uses:` to our own workflows moves nothing —
+#     which is exactly the failure mode Cycle 4 flagged: *"do not let a metric be
+#     satisfied by an artifact with no strangers in front of it."*
+#   - It is a DEMAND number, not an output number. `live_artifacts_verified`
+#     says we shipped. This says somebody picked it up. Only the second one is
+#     evidence of a market.
+#
+# Calibration run by hand before this was written, so the metric is known to
+# discriminate rather than assumed to:
+#
+#     reviewdog/action-actionlint   ->  1,416 files, 100+ distinct repos
+#     pullguard-dev/pullguard-action ->     4 files,   2 distinct repos,
+#                                            and BOTH are pullguard's own.
+#
+# That second line is the whole argument for this probe. Round-1 discovery cited
+# pullguard as proof that the license-key business model works — "not a
+# hypothesis, a fetched artifact." The mechanism is real and **its third-party
+# adoption is exactly zero.** A metric that can tell those two repos apart is
+# worth having; a star count could not.
+#
+# HONESTY RULES, same as every other probe here:
+#   - Cannot reach the search API  -> null (`we could not ask`)
+#   - Reached it and nobody uses us -> 0    (`we asked, the answer was zero`)
+# Those are different facts and the Ledger never collapses them.
+probe_demand() {
+    DEPS="null"; DEPS_SRC="none"
+
+    if [ "$LEDGER_OFFLINE" = "1" ]; then DEPS_SRC="offline-mode"; return 0; fi
+    command -v gh >/dev/null 2>&1 || { DEPS_SRC="none:gh-absent"; return 0; }
+    gh auth status >/dev/null 2>&1 || { DEPS_SRC="none:gh-unauthenticated"; return 0; }
+
+    local q page=1 out rc=0 got total="" repos="$CYCLE_EVIDENCE/dependent-repos.txt"
+    q="uses:${LEDGER_GH_OWNER}/ path:.github/workflows"
+    : > "$repos"
+
+    # The search API pages at 100 and hard-caps at 1000 results. Walk until a
+    # short page, then stop. Code search is rate-limited to ~10 req/min, so this
+    # deliberately stops at 5 pages and SAYS SO in the source string rather than
+    # silently reporting a truncated count as if it were complete.
+    while [ "$page" -le 5 ]; do
+        out="$CYCLE_EVIDENCE/code-search-p${page}.json"
+        rc=0
+        gh api -X GET /search/code \
+            -f q="$q" -F per_page=100 -F page="$page" > "$out" 2>"$out.err" || rc=$?
+
+        if [ "$rc" -ne 0 ]; then
+            # A rate-limited or forbidden search must NEVER become a 0. Code
+            # search 403s under load, and a 0 here would read as "we shipped and
+            # nobody came" when the truth is "we never got to ask."
+            if grep -qi 'rate limit' "$out.err" "$out" 2>/dev/null; then
+                DEPS_SRC="gh-code-search:rate-limited"
+            else
+                DEPS_SRC="gh-code-search:request-failed:rc-$rc"
+            fi
+            return 0
+        fi
+
+        [ -z "$total" ] && total=$(jq -r '.total_count // empty' "$out" 2>/dev/null || echo "")
+        got=$(jq -r '.items | length' "$out" 2>/dev/null || echo "")
+        case "$got" in ''|*[!0-9]*) DEPS_SRC="gh-code-search:unparseable-result"; return 0 ;; esac
+
+        # Exclude our own repositories. Self-use is not demand.
+        jq -r --arg me "$LEDGER_GH_OWNER" \
+            '.items[].repository.full_name | select(ascii_downcase | startswith(($me|ascii_downcase) + "/") | not)' \
+            "$out" >> "$repos" 2>/dev/null || true
+
+        [ "$got" -lt 100 ] && break
+        page=$((page + 1))
+    done
+
+    local n
+    n=$(sort -u "$repos" | grep -c . || true)
+    case "$n" in ''|*[!0-9]*) n=0 ;; esac
+    DEPS="$n"
+
+    case "$total" in ''|*[!0-9]*) total="?" ;; esac
+    if [ "$page" -gt 5 ]; then
+        DEPS_SRC="gh-code-search:distinct-foreign-repos:page-cap-5:files-$total"
+    else
+        DEPS_SRC="gh-code-search:distinct-foreign-repos:files-$total"
+    fi
     return 0
 }
 
@@ -592,8 +702,8 @@ write_consensus() {
 
         printf '%s\n' "$MARK_BEGIN"
         # RULE: the permanent header, cycle count next to dollars collected.
-        printf 'Cycles: %s | Collected: %s | Embed domains: %s | Live artifacts: %s | NO-PROGRESS streak: %s\n' \
-            "$CYCLE" "$(money "$COLLECTED")" "$(count_disp "$EMBED")" "$(count_disp "$LIVE")" "$STREAK"
+        printf 'Cycles: %s | Collected: %s | Dependent repos: %s | Live artifacts: %s | NO-PROGRESS streak: %s\n' \
+            "$CYCLE" "$(money "$COLLECTED")" "$(count_disp "$DEPS")" "$(count_disp "$LIVE")" "$STREAK"
         printf '\n'
         printf 'Last row: `%s` at %s — verdict **%s**. npm_published: `%s`.\n' \
             "cycle $CYCLE" "$TS" "$VERDICT" "$NPM"
@@ -603,6 +713,7 @@ write_consensus() {
         printf 'Sources this cycle:\n'
         printf -- '- collected_cents: `%s`\n' "$COLLECTED_SRC"
         printf -- '- embed_domains: `%s`\n' "$EMBED_SRC"
+        printf -- '- dependent_repos: `%s`\n' "$DEPS_SRC"
         printf -- '- live_artifacts_verified: `%s`\n' "$LIVE_SRC"
         printf -- '- npm_published: `%s`\n' "$NPM_SRC"
         printf '\n'
@@ -728,12 +839,14 @@ fi
 
 probe_polar
 probe_d1
+probe_demand
 probe_gha
 probe_npm
 
 progressed=""
 if num_progressed  "$PREV_COLLECTED" "$COLLECTED"; then progressed="$progressed collected_cents"; fi
 if num_progressed  "$PREV_EMBED"     "$EMBED";     then progressed="$progressed embed_domains"; fi
+if num_progressed  "$PREV_DEPS"      "$DEPS";      then progressed="$progressed dependent_repos"; fi
 if num_progressed  "$PREV_LIVE"      "$LIVE";      then progressed="$progressed live_artifacts_verified"; fi
 if bool_progressed "$PREV_NPM"       "$NPM";       then progressed="$progressed npm_published"; fi
 
@@ -753,6 +866,8 @@ ROW=$(jq -c -n \
     --arg     collected_src "$COLLECTED_SRC" \
     --argjson embed_domains "$EMBED" \
     --arg     embed_domains_src "$EMBED_SRC" \
+    --argjson dependent_repos "$DEPS" \
+    --arg     dependent_repos_src "$DEPS_SRC" \
     --argjson live_artifacts_verified "$LIVE" \
     --arg     live_src "$LIVE_SRC" \
     --argjson npm_published "$NPM" \
@@ -762,6 +877,7 @@ ROW=$(jq -c -n \
     '{cycle:$cycle, ts:$ts,
       collected_cents:$collected_cents, collected_src:$collected_src,
       embed_domains:$embed_domains, embed_domains_src:$embed_domains_src,
+      dependent_repos:$dependent_repos, dependent_repos_src:$dependent_repos_src,
       live_artifacts_verified:$live_artifacts_verified, live_src:$live_src,
       npm_published:$npm_published, npm_src:$npm_src,
       verdict:$verdict, streak:$streak}') \
