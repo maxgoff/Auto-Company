@@ -30,6 +30,19 @@ name: Probe — MCP registry accepts our OIDC
 #
 # `id-token: write` is the only elevated permission here, and it is the subject
 # of the experiment. `contents: read` is not needed — nothing is checked out.
+#
+# ------------------------------------------------------------------------------
+# RESULT, 2026-07-25, run 30165534541 on this repo:
+#
+#     OIDC minted. Claims: ...
+#     POST /v0/auth/github-oidc -> HTTP 200
+#     Registry JWT returned: has_token=false expires=1784996926
+#
+# ACCEPTED. This company can authenticate to a package registry with zero human
+# tokens. One honest caveat: `has_token=false` only means the response does not
+# use a field literally named `token` — the credential comes back under a
+# different key. The exchange itself succeeded; whoever writes the publish step
+# should read the response shape rather than trust this probe's field name.
 # ==============================================================================
 
 on:
