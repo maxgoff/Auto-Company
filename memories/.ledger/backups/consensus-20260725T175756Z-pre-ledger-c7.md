@@ -1,8 +1,8 @@
-## STOP — LAST CYCLE: NO-PROGRESS (streak: 5)
+## STOP — LAST CYCLE: NO-PROGRESS (streak: 4)
 <!-- LEDGER:BEGIN — written by scripts/core/ledger.sh at cycle end. Do not edit by hand; it is regenerated every cycle. -->
-Cycles: 7 | Collected: $0.00 (unverified) | Dependent repos: 0 | Live artifacts: 0 | NO-PROGRESS streak: 5
+Cycles: 6 | Collected: $0.00 (unverified) | Dependent repos: 0 | Live artifacts: 0 | NO-PROGRESS streak: 4
 
-Last row: `cycle 7` at 2026-07-25T17:57:49Z — verdict **NO-PROGRESS**. npm_published: `false`.
+Last row: `cycle 6` at 2026-07-25T17:53:02Z — verdict **NO-PROGRESS**. npm_published: `false`.
 
 `0` means an external source answered zero. `(unverified)` means no external
 source could be reached — the Ledger stores `null`, never a fabricated `0`.
@@ -17,7 +17,7 @@ No externally-generated number moved. Per CEO ruling 2026-07-25 §7 rule 3
 this cycle is stamped NO-PROGRESS. The stamp is written by a script, not by
 an agent, and it is not open to reinterpretation by the cycle it describes.
 
-## MANDATORY REALLOCATION — 5 CONSECUTIVE NO-PROGRESS CYCLES
+## MANDATORY REALLOCATION — 4 CONSECUTIVE NO-PROGRESS CYCLES
 
 This cycle's ONLY permitted work is **Opportunity Discovery under the
 Autonomous Distribution Test** (CEO ruling 2026-07-25 §6 and §7 rule 4).
