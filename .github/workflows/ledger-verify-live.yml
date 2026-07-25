@@ -48,6 +48,16 @@ name: Ledger — verify live artifact
 #
 # Both jobs rendered as `verify <url>`, so `ledger.sh`'s `startswith("verify")`
 # count stays correct: 1 and 0 respectively.
+#
+# Those very tests then exposed a hole and it was closed — see the `prefix` logic
+# in `discover` below. Proof, run 30165734400:
+#
+#     success  discover
+#     success  adhoc https://postman-echo.com/get
+#
+# The job PASSED and is still uncountable, because `startswith("verify")` cannot
+# match `adhoc`. A test of this workflow can no longer be mistaken for a shipped
+# artifact, whatever order the runs complete in.
 # ==============================================================================
 
 on:
