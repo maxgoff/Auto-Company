@@ -1,0 +1,119 @@
+name: Pages — deploy static site
+
+# ==============================================================================
+# The company's static-hosting rail. Costs ZERO human tokens: it runs on the
+# built-in GITHUB_TOKEN, not on any credential a human had to create.
+#
+#   git push -> this workflow -> https://maxgoff.github.io/Auto-Company/
+#
+# Runbook, including measured timings and the failure modes actually hit while
+# building it: docs/devops/2026-07-25-github-pages-rail.md
+#
+# WHAT IS PUBLISHED: the contents of `site/`, with `__COMMIT__` and
+# `__BUILT_AT__` substituted at build time. Stamping the commit into the page is
+# not decoration — it is what makes an external `contains:<sha>` assertion mean
+# anything. Without it, a stale deploy from three weeks ago satisfies the same
+# assertion as a fresh one, and the Ledger would be certifying a cached corpse.
+#
+# WHAT IS NOT PUBLISHED: anything else in this repo. `site/` is the whole
+# document root; the build copies that directory and nothing else.
+# ==============================================================================
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/pages-deploy.yml"
+  workflow_dispatch:
+
+# `pages: write` + `id-token: write` are what actions/deploy-pages needs to mint
+# its OIDC deployment token. `contents: read` is deliberately not `write` — this
+# workflow can publish, and cannot mutate the repository.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race. Not cancel-in-progress: a half-finished deploy
+# that got cancelled is a worse state than a queued one.
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble _site and stamp the build
+        run: |
+          set -euo pipefail
+
+          [ -d site ] || { echo "::error::site/ does not exist — nothing to publish"; exit 1; }
+
+          rm -rf _site
+          mkdir -p _site
+          cp -R site/. _site/
+
+          # Disable Jekyll. Without this, Pages runs the content through Jekyll,
+          # which silently DROPS any file or directory whose name begins with an
+          # underscore. A future cycle publishing a bundler's `_next/` or
+          # `_assets/` output would get a page that 404s on every asset and no
+          # error anywhere explaining why.
+          touch _site/.nojekyll
+
+          built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          sed -i "s|__COMMIT__|${GITHUB_SHA}|g; s|__BUILT_AT__|${built_at}|g" _site/index.html
+
+          # A surviving placeholder means the stamp silently did not apply, and
+          # every downstream `contains:<sha>` assertion would fail with a
+          # confusing message. Fail here instead, where the cause is obvious.
+          if grep -q "__COMMIT__\|__BUILT_AT__" _site/index.html; then
+            echo "::error::a build placeholder survived substitution"
+            exit 1
+          fi
+
+          {
+            echo "### Pages build"
+            echo
+            echo "| field | value |"
+            echo "|---|---|"
+            echo "| commit | \`${GITHUB_SHA}\` |"
+            echo "| built_at | \`${built_at}\` |"
+            echo "| bytes | $(wc -c < _site/index.html | tr -d ' ') |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Report the public URL
+        run: |
+          set -euo pipefail
+          echo "Published: ${{ steps.deployment.outputs.page_url }}"
+          {
+            echo "### Published"
+            echo
+            echo "<${{ steps.deployment.outputs.page_url }}>"
+            echo
+            echo "This URL is NOT in \`.github/ledger-live-urls.txt\` and must not be."
+            echo "It is an infrastructure test page, not company output."
+          } >> "$GITHUB_STEP_SUMMARY"

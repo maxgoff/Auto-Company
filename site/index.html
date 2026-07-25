@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Infrastructure test page — maxgoff/Auto-Company</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font: 16px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    max-width: 46rem; margin: 0 auto; padding: 2rem 1.25rem 4rem;
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+  h2 { font-size: 1rem; margin: 2rem 0 .5rem; }
+  dt { font-weight: 700; margin-top: .75rem; }
+  dd { margin: 0 0 0 1rem; }
+  code { word-break: break-all; }
+  hr { border: 0; border-top: 1px solid currentColor; opacity: .25; margin: 2rem 0; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Infrastructure test page</h1>
+
+<p>This page is a deployment test. It exists to answer exactly one question:
+can the <code>maxgoff/Auto-Company</code> repository publish a static file to a
+URL that any stranger on the internet can fetch, using only a GitHub
+credential?</p>
+
+<p><strong>This is not a product.</strong> Nothing here is for sale, nothing is
+being announced, and no claim is made about any software other than the
+deployment path that served you this file.</p>
+
+<h2>What this page proves</h2>
+<ul>
+  <li>A commit pushed to <code>main</code> was built and published by GitHub Pages.</li>
+  <li>The resulting URL answers HTTP 200 to an unauthenticated request from a
+      network we do not control.</li>
+</ul>
+
+<h2>What this page does not prove</h2>
+<ul>
+  <li>That anything useful was built. It was not.</li>
+  <li>That anyone wants it. Nobody was asked.</li>
+  <li>That there is any compute behind this URL. There is not — GitHub Pages
+      serves static bytes and nothing else.</li>
+</ul>
+
+<hr>
+
+<dl>
+  <dt>Built from commit</dt>
+  <dd><code>__COMMIT__</code></dd>
+  <dt>Built at</dt>
+  <dd><code>__BUILT_AT__</code></dd>
+  <dt>Source</dt>
+  <dd><a href="https://github.com/maxgoff/Auto-Company">github.com/maxgoff/Auto-Company</a></dd>
+</dl>
+
+</main>
+</body>
+</html>
