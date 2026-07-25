@@ -515,34 +515,79 @@ probe_gha() {
         return 0
     fi
 
-    local run_id conclusion url
-    run_id=$(jq -r '[.[] | select(.status=="completed")] | sort_by(.createdAt) | last | .databaseId // empty' "$runs" 2>/dev/null || echo "")
-    if [ -z "$run_id" ]; then
+    # Pick the most recent completed run that is NOT an ad-hoc test run.
+    #
+    # THE HAZARD THIS CLOSES (found 2026-07-25, Cycle 5, while ad-hoc runs were
+    # in flight). Cycle 4 stopped a test run from INFLATING the count, by naming
+    # override jobs `adhoc <url>` so `startswith("verify")` cannot match them.
+    # But this probe took the latest completed run unconditionally, so a test
+    # dispatched AFTER a real verification would have contributed zero
+    # `verify*` jobs and silently ERASED a legitimately earned number.
+    #
+    # Under-counting cannot fabricate progress, so this was never a route to a
+    # false PROGRESS stamp — but it made the company's headline metric depend on
+    # who happened to be testing the verifier at cycle end, and a number that
+    # moves for reasons unrelated to shipping is not a measurement. It would
+    # also have punished exactly the behaviour we want: testing the verifier.
+    #
+    # An ad-hoc run is identifiable with certainty — its jobs are named `adhoc*`,
+    # a prefix no list-driven run can ever produce. Skip those runs entirely and
+    # keep walking back. A real run with an empty URL list has no `verify*` jobs
+    # either, but it is NOT skipped: that is an honest 0 and must still count.
+    local candidates run_id="" conclusion url jobs="$CYCLE_EVIDENCE/gh-run-jobs.json"
+    local n="" tried=0 skipped=0 cand_id cand_concl cand_url
+    candidates=$(jq -r '[.[] | select(.status=="completed")] | sort_by(.createdAt) | reverse | .[].databaseId' "$runs" 2>/dev/null || echo "")
+
+    if [ -z "$candidates" ]; then
         LIVE=0
         LIVE_SRC="gh-actions:$repo$rotag:no-completed-run"
         return 0
     fi
-    conclusion=$(jq -r --argjson id "$run_id" '[.[] | select(.databaseId==$id)] | first | .conclusion // "unknown"' "$runs")
-    url=$(jq -r --argjson id "$run_id" '[.[] | select(.databaseId==$id)] | first | .url // ""' "$runs")
+
+    for cand_id in $candidates; do
+        [ "$tried" -lt 10 ] || break
+        tried=$((tried + 1))
+
+        cand_concl=$(jq -r --argjson id "$cand_id" '[.[] | select(.databaseId==$id)] | first | .conclusion // "unknown"' "$runs")
+        cand_url=$(jq -r --argjson id "$cand_id" '[.[] | select(.databaseId==$id)] | first | .url // ""' "$runs")
+
+        if ! (cd "$PROJECT_DIR" && gh run view "$cand_id" --repo "$repo" --json jobs) > "$jobs" 2>/dev/null; then
+            LIVE_SRC="none:gh-run-jobs-unreadable"
+            return 0
+        fi
+
+        if jq -e '[.jobs[] | select(.name | startswith("adhoc"))] | length > 0' "$jobs" >/dev/null 2>&1; then
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        run_id="$cand_id"; conclusion="$cand_concl"; url="$cand_url"
+        break
+    done
+
+    if [ -z "$run_id" ]; then
+        # Every recent run was a test of the verifier. We have not asked the
+        # real question, so this is `null` — not a zero.
+        LIVE_SRC="gh-actions:$repo$rotag:only-adhoc-runs-found:skipped-$skipped"
+        return 0
+    fi
+
+    local skiptag=""
+    [ "$skipped" -gt 0 ] && skiptag="#skipped-adhoc=$skipped"
 
     if [ "$conclusion" != "success" ]; then
         LIVE=0
-        LIVE_SRC="$url#conclusion=$conclusion"
+        LIVE_SRC="$url#conclusion=$conclusion$skiptag"
         return 0
     fi
 
-    local jobs="$CYCLE_EVIDENCE/gh-run-jobs.json" n
-    if ! (cd "$PROJECT_DIR" && gh run view "$run_id" --repo "$repo" --json jobs) > "$jobs" 2>/dev/null; then
-        LIVE_SRC="none:gh-run-jobs-unreadable"
-        return 0
-    fi
     # Count successful matrix jobs named `verify (<url>)`. The count comes from
     # GitHub's job list, not from our repo.
     n=$(jq -r '[.jobs[] | select(.conclusion=="success") | select(.name | startswith("verify"))] | length' "$jobs" 2>/dev/null || echo "")
     case "$n" in ''|*[!0-9]*) LIVE_SRC="none:gh-job-count-unparseable"; return 0 ;; esac
 
     LIVE="$n"
-    LIVE_SRC="$url"
+    LIVE_SRC="$url$skiptag"
     return 0
 }
 
