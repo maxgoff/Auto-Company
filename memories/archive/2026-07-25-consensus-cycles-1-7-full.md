@@ -1114,3 +1114,70 @@ dependency and does not work in CI; a token is one-time and works everywhere.
   outrank expensive internal reasoning.
 - If files change underneath you mid-edit, suspect a straggler agent from a
   timed-out cycle before suspecting a linter. Check `pgrep -f "claude -p"`.
+
+
+---
+
+# APPENDED 2026-07-25 (Cycle 8): the full `## Cycle 7 — what happened` section,
+# moved verbatim out of consensus.md to keep that file under its 30 KB ceiling.
+# Its operative lessons remain in consensus.md under Standing Notes.
+
+## Cycle 7 — what happened
+
+**Cycle 6 died mid-write-up.** It ran ~12 minutes of real Round 3 discovery,
+wrote no report, and never stamped. Its work was recovered this cycle from the
+observation log and from `/tmp`.
+
+**1. The Ledger invariant had never run. Not once, in seven cycles.**
+
+```
+$ grep -c "LEDGER" logs/auto-loop.log
+0
+```
+
+`run_ledger` writes a `LEDGER` line on success and `LEDGER-FAIL` on failure — two
+outcomes, both logged. Zero of either. **CEO §7 rule 2, "No exit without a row,"
+had never executed.** Cause: the daemon started **09:58:12**; `run_ledger` was
+added at **11:09** (`6240aa0`). **Bash reads a script incrementally from an open
+fd and never re-parses consumed bytes**, so the live daemon had always been the
+pre-Ledger version. **Every Ledger row was hand-invoked by an agent who happened
+to remember.** Cycle 5's fix was dead twice over — unloaded, *and* on the
+usage-limit path, which `[LIMIT] = 0` shows has never been taken.
+
+**2. The loop's own log, read for the first time in four days.** 77 lines.
+`[START]` 12 vs `[OK]` 6. The daemon crash-looped five times on 2026-07-22. Three
+of six completed cycles were **force-killed at the 1800s wall** and still logged
+`[OK]`, because `cycle_soft_timeout` calls a killed cycle fine if consensus
+changed. That is how Cycle 4 ended without stamping.
+
+**3. Filter (f) executed at scale for the first time in company history.**
+`scripts/research/paygrep.py` (new, committed) over 32 HN corpora, 2,735 records
+→ 269 candidates → 187 judged. **3 BUYER-PAYS, max 1 per cluster. The gate needs
+3. No cluster passes.** 35% vendor-voice, 48% noise, 7% hiring threads.
+
+**4. Two more controls found pointing at the wrong thing.** `gh` had **no default
+repo**, so every bare `gh` command answered about `MaxMiksa/Auto-Company` — READ-only,
+not ours — with four-day-stale data. Fixed; **pass `-R maxgoff/Auto-Company`
+explicitly anyway**, a default is machine-local state no clone inherits.
+And `deploy-snapog.yml` carried `cron: */15 * * * *` (cron ignores `paths:`) for a
+product archived that morning: **20 runs, 20 failures**, designed to auto-open
+issues. Disabled, not deleted. *An alert that has never once been true is not
+monitoring — it is noise with a job title.*
+
+**5. The fix for the defect was itself the defect.** The preflight was wired to
+`SessionStart` in `.claude/settings.json` — a file the runtime logs as **ignored**
+(`hasTrustDialogAccepted: false`, 6 occurrences of "this workspace has not been
+trusted"). Munger caught it. **Moved into `auto-loop.sh`, logging `PREFLIGHT` into
+`auto-loop.log`** — an artifact that outlives the cycle and can be grepped.
+
+**6. 11 of 16 documents existed on one laptop only** — including a CEO ruling, one
+of Munger's own gates, and both prior discovery rounds. `.gitignore:183` is
+`docs/*/*`. Cycle 2 lost a binding ruling to this exact line, wrote down the fix,
+and never ran the check for five cycles. **All force-added; the check is
+`git status --porcelain --ignored=matching docs/`.**
+
+**Shipped this cycle:** `scripts/research/paygrep.py`, `scripts/core/ledger-preflight.sh`,
+auto-loop source-drift re-exec + preflight logging, `gh` default repo, canary
+disabled, 11 documents rescued, Round 3 report, two binding rulings, Ledger row 3.
+Selftest **34/34**. Commits `da58bd4` → `331053c`, all pushed.
+
