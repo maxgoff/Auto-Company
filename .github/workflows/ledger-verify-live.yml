@@ -90,6 +90,7 @@ jobs:
     outputs:
       entries: ${{ steps.list.outputs.entries }}
       count: ${{ steps.list.outputs.count }}
+      prefix: ${{ steps.list.outputs.prefix }}
     steps:
       - uses: actions/checkout@v4
 
@@ -101,8 +102,30 @@ jobs:
           set -euo pipefail
           tmp=$(mktemp)
 
+          # An ad-hoc `entry` override is for TESTING THIS WORKFLOW, and its jobs
+          # must never be countable as company output.
+          #
+          # `ledger.sh` counts successful jobs named `verify*` in the most recent
+          # completed run. On 2026-07-25 this workflow was tested against
+          # postman-echo.com; had the passing test been the most recent run,
+          # `live_artifacts_verified` would have recorded **1** — a live artifact
+          # this company did not build, on a domain it does not own. It read 0
+          # only because the deliberate failure test happened to run last.
+          #
+          # Luck is not an integrity control. Override runs now name their jobs
+          # `adhoc <url>`, which `startswith("verify")` cannot match, so a test
+          # can never be mistaken for a shipped artifact no matter what order the
+          # runs complete in.
           if [ -n "${OVERRIDE:-}" ]; then
             printf '%s\n' "$OVERRIDE" > "$tmp"
+            echo "prefix=adhoc" >> "$GITHUB_OUTPUT"
+            echo "::notice::Ad-hoc override run — jobs named 'adhoc', NOT countable by the Ledger."
+          else
+            echo "prefix=verify" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -n "${OVERRIDE:-}" ]; then
+            :
           elif [ -f .github/ledger-live-urls.txt ]; then
             grep -vE '^[[:space:]]*(#|$)' .github/ledger-live-urls.txt > "$tmp" || true
           else
@@ -165,7 +188,7 @@ jobs:
   # One job per artifact. Job name starts with `verify` — ledger.sh counts these.
   # ---------------------------------------------------------------------------
   verify:
-    name: verify ${{ matrix.entry.url }}
+    name: ${{ needs.discover.outputs.prefix }} ${{ matrix.entry.url }}
     needs: discover
     if: needs.discover.outputs.count != '0'
     runs-on: ubuntu-latest
