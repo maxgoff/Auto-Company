@@ -82,9 +82,26 @@ Open http://127.0.0.1:8787
 
 ### Test
 
+**Full regression suite** — 35 checks, registers its own key, no setup. Run this
+before every deploy. Exit code is the number of failures, so CI can gate on it.
+
 ```bash
-# Register a key via browser at http://127.0.0.1:8787/register
-# Then test with:
+# Against a server you already have running:
+BASE_URL=http://127.0.0.1:8787 ./scripts/smoke-test.sh
+
+# Or let it boot and tear down `wrangler dev` itself:
+START_SERVER=1 ./scripts/smoke-test.sh
+```
+
+It covers the paths where a bug costs money: registration can never self-issue a
+paid tier, a `pk_` key renders but is refused by `/dashboard` `/checkout`
+`/billing/portal`, only cache misses are metered, forged Stripe webhooks grant
+nothing, and over-quota degrades to a placeholder PNG instead of a broken card.
+
+**Quick manual poke** — one image, needs a key you already have:
+
+```bash
+# Register a key via browser at http://127.0.0.1:8787/register, then:
 API_KEY=sk_your_key bash sample/smoke-test.sh
 
 # Or direct curl:
