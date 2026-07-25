@@ -51,8 +51,10 @@
 #   LEDGER_CONSENSUS       default <root>/memories/consensus.md
 #   LEDGER_STATE_DIR       default <root>/memories/.ledger
 #   LEDGER_CYCLE           force the cycle number (else last row + 1, else 1)
-#   LEDGER_NPM_PACKAGE     default og-worker   (`snapog` is owned by a stranger)
-#   LEDGER_NPM_PKG_JSON    default <root>/projects/snapog/package.json
+#   LEDGER_NPM_PACKAGE     default EMPTY — SnapOG archived 2026-07-25; the next
+#                          product sets it. Empty => npm_published false with
+#                          reason `no-package-named-yet`, not a bare 404.
+#   LEDGER_NPM_PKG_JSON    default EMPTY (was projects/snapog/package.json)
 #   LEDGER_GH_REPO         default `gh repo view` on the cwd
 #   LEDGER_GH_WORKFLOW     default ledger-verify-live.yml
 #   LEDGER_D1_DB           default snapog-db
@@ -81,8 +83,13 @@ STATE_DIR="${LEDGER_STATE_DIR:-$PROJECT_DIR/memories/.ledger}"
 BACKUP_DIR="$STATE_DIR/backups"
 EVIDENCE_DIR="$STATE_DIR/evidence"
 
-LEDGER_NPM_PACKAGE="${LEDGER_NPM_PACKAGE:-og-worker}"
-LEDGER_NPM_PKG_JSON="${LEDGER_NPM_PKG_JSON:-$PROJECT_DIR/projects/snapog/package.json}"
+# Empty by default since 2026-07-25: SnapOG is archived and `og-worker` was its
+# unpublished name. A probe aimed at a retired name reports `404`, which reads
+# as "we tried to ship and have not yet" when the truth is "there is nothing to
+# ship." Whichever product comes next sets these two, and until one does the row
+# says so in plain words.
+LEDGER_NPM_PACKAGE="${LEDGER_NPM_PACKAGE:-}"
+LEDGER_NPM_PKG_JSON="${LEDGER_NPM_PKG_JSON:-}"
 LEDGER_GH_WORKFLOW="${LEDGER_GH_WORKFLOW:-ledger-verify-live.yml}"
 LEDGER_D1_DB="${LEDGER_D1_DB:-snapog-db}"
 LEDGER_D1_DIR="${LEDGER_D1_DIR:-$PROJECT_DIR/projects/snapog}"
@@ -286,6 +293,24 @@ probe_d1() {
     EMBED="null"; EMBED_SRC="none"
 
     if [ "$LEDGER_OFFLINE" = "1" ]; then EMBED_SRC="offline-mode"; return 0; fi
+
+    # Retired with the product it measured. SnapOG was ARCHIVED by CEO ruling
+    # 2026-07-25, so the Worker that would write this table will never deploy.
+    #
+    # Left reporting `none:CLOUDFLARE_API_TOKEN-unset`, this probe would have
+    # told every future cycle that one human token unblocks a demand number —
+    # which is false, and is precisely the sort of confident-sounding breadcrumb
+    # that has already cost this company whole cycles. `null` is unchanged and
+    # still correct; only the reason is now true.
+    #
+    # This stays until a NEW product defines what "distinct third parties using
+    # our thing" means for it. Set LEDGER_EMBED_RETIRED=0 to re-enable the D1
+    # query as-is.
+    if [ "${LEDGER_EMBED_RETIRED:-1}" = "1" ]; then
+        EMBED_SRC="retired:snapog-archived-2026-07-25:no-successor-metric-yet"
+        return 0
+    fi
+
     if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
         EMBED_SRC="none:CLOUDFLARE_API_TOKEN-unset"
         return 0
@@ -426,6 +451,15 @@ probe_npm() {
 
     if [ "$LEDGER_OFFLINE" = "1" ]; then NPM_SRC="offline-mode"; return 0; fi
     command -v curl >/dev/null 2>&1 || { NPM_SRC="none:curl-missing"; return 0; }
+
+    # No package name means there is no package to look for. `false` is still
+    # the correct value — nothing is published — but the reason must not read
+    # like a failed publish of something real.
+    if [ -z "$LEDGER_NPM_PACKAGE" ]; then
+        NPM="false"
+        NPM_SRC="none:no-package-named-yet:set-LEDGER_NPM_PACKAGE"
+        return 0
+    fi
 
     if [ -f "$LEDGER_NPM_PKG_JSON" ]; then
         NPM_WANT_VERSION=$(jq -r '.version // empty' "$LEDGER_NPM_PKG_JSON" 2>/dev/null || echo "")
