@@ -124,8 +124,89 @@ EOF
 cleanup() {
     log "=== Auto Loop Shutting Down (PID $$) ==="
     rm -f "$PID_FILE"
+    kill_engine_stragglers "shutdown"
     save_state "stopped"
     exit 0
+}
+
+# ------------------------------------------------------------------
+# Process-tree teardown
+# ------------------------------------------------------------------
+# The engine is launched inside a `( ... ) &` subshell, so $! is the SUBSHELL,
+# not the engine. Signalling only that pid leaves the engine (and the MCP
+# servers, sidecar models and subagents it spawned) running.
+#
+# This actually happened on 2026-07-25: Cycle #1 hit CYCLE_TIMEOUT_SECONDS, the
+# loop logged the timeout and started Cycle #2, but the Cycle-1 `claude -p`
+# survived and kept editing projects/snapog while Cycle #2 edited the same
+# files. Two autonomous agents in one working tree silently clobber each other's
+# writes — this is a correctness bug, not just a resource leak.
+#
+# So: walk the whole descendant tree and signal children before parents, so a
+# parent can't re-parent or respawn a child we already killed.
+collect_descendants() {
+    local pid="$1" child
+    for child in $(pgrep -P "$pid" 2>/dev/null); do
+        collect_descendants "$child"
+    done
+    echo "$pid"
+}
+
+# kill_process_tree <pid> — TERM the tree, give it grace, then KILL what's left.
+kill_process_tree() {
+    local root="$1" grace="${2:-5}" pids pid
+    [ -n "$root" ] || return 0
+
+    pids=$(collect_descendants "$root")
+    for pid in $pids; do
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+
+    # Poll instead of a flat sleep so a clean exit doesn't cost the full grace.
+    local waited=0
+    while [ "$waited" -lt "$grace" ]; do
+        kill -0 "$root" 2>/dev/null || break
+        sleep 1
+        waited=$((waited + 1))
+    done
+
+    # Re-collect: the tree may have changed shape while it was shutting down.
+    for pid in $(collect_descendants "$root"); do
+        kill -KILL "$pid" 2>/dev/null || true
+    done
+}
+
+# Belt-and-braces sweep for engine processes that outlived their subshell and
+# got re-parented to init. kill_process_tree above handles the tree that exists
+# at timeout; this catches anything already orphaned by an earlier cycle.
+#
+# Three filters, ALL required, because a false positive here would kill a
+# human's session:
+#   1. argv matches the engine binary  — it's an engine process
+#   2. PPID == 1                       — it's an ORPHAN. A live cycle's engine is
+#                                        parented to its subshell, and a human's
+#                                        interactive session is parented to a
+#                                        shell, so neither can ever match.
+#   3. cwd == PROJECT_DIR              — it belongs to this company, not another
+#                                        repo the human is working in.
+kill_engine_stragglers() {
+    local reason="$1" pid ppid cwd
+    [ -n "$RESOLVED_ENGINE_BIN" ] || return 0
+    command -v pgrep >/dev/null 2>&1 || return 0
+
+    for pid in $(pgrep -f "$RESOLVED_ENGINE_BIN" 2>/dev/null); do
+        [ "$pid" = "$$" ] && continue
+
+        ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+        [ "$ppid" = "1" ] || continue
+
+        cwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
+        [ "$cwd" = "$PROJECT_DIR" ] || continue
+
+        log "Reaping orphaned engine process $pid ($reason) — it would otherwise edit the working tree underneath the next cycle"
+        kill_process_tree "$pid" 5
+    done
+    return 0
 }
 
 snapshot_gitignore() {
@@ -407,9 +488,7 @@ run_codex_cycle() {
         sleep "$CYCLE_TIMEOUT_SECONDS"
         if kill -0 "$codex_pid" 2>/dev/null; then
             echo "1" > "$timeout_flag"
-            kill -TERM "$codex_pid" 2>/dev/null || true
-            sleep 5
-            kill -KILL "$codex_pid" 2>/dev/null || true
+            kill_process_tree "$codex_pid" 5
         fi
     ) &
     local watchdog_pid=$!
@@ -419,6 +498,9 @@ run_codex_cycle() {
 
     kill "$watchdog_pid" 2>/dev/null || true
     wait "$watchdog_pid" 2>/dev/null || true
+    # `wait` returns when the SUBSHELL exits; the engine and its MCP servers can
+    # outlive it. Sweep before the next cycle starts, never after.
+    kill_engine_stragglers "post-cycle"
     set -e
 
     OUTPUT=$(cat "$output_file")
@@ -459,9 +541,7 @@ run_claude_cycle() {
         sleep "$CYCLE_TIMEOUT_SECONDS"
         if kill -0 "$claude_pid" 2>/dev/null; then
             echo "1" > "$timeout_flag"
-            kill -TERM "$claude_pid" 2>/dev/null || true
-            sleep 5
-            kill -KILL "$claude_pid" 2>/dev/null || true
+            kill_process_tree "$claude_pid" 5
         fi
     ) &
     local watchdog_pid=$!
@@ -471,6 +551,9 @@ run_claude_cycle() {
 
     kill "$watchdog_pid" 2>/dev/null || true
     wait "$watchdog_pid" 2>/dev/null || true
+    # `wait` returns when the SUBSHELL exits; `claude -p` and its MCP servers can
+    # outlive it. Sweep before the next cycle starts, never after.
+    kill_engine_stragglers "post-cycle"
     set -e
 
     OUTPUT=$(cat "$output_file")
@@ -606,6 +689,12 @@ else
     log "Engine: claude | Model: $MODEL_LABEL | PermissionMode: $CLAUDE_PERMISSION_MODE"
 fi
 log "Engine bin: $RESOLVED_ENGINE_BIN"
+
+# A previous loop may have been SIGKILLed (or crashed) leaving its engine
+# orphaned. Reap before Cycle #1 so we never start with two agents writing to
+# one working tree.
+kill_engine_stragglers "startup"
+
 engine_version=$("$RESOLVED_ENGINE_BIN" --version 2>/dev/null | head -n1 || true)
 case "$RESOLVED_ENGINE_BIN" in
     /mnt/c/*)
