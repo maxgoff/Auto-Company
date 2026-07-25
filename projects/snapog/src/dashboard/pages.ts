@@ -1,10 +1,21 @@
 // SnapOG — Dashboard & landing page HTML
-// Aesthetic: "Carbon Terminal" — dark developer tool, amber accent, monospace-first.
-// Billing surfaces extend the same system: mono micro-labels, amber as the only
-// call-to-action colour, receipt-paper dashed rules for anything money-related.
+//
+// Aesthetic: "Carbon Terminal, editorial masthead."
+//
+// The base system is a dark developer tool — amber accent, monospace micro-labels,
+// dot-grid ground. The landing page sets an Instrument Serif display face against
+// it, because this product's entire output is TYPOGRAPHY RENDERED INTO AN IMAGE:
+// a page that sets type beautifully is the demo. A gradient-filled sans headline
+// (what was here before) argued the opposite case.
+//
+// NOTHING ON ANY USER-FACING PAGE SHOWS A PRICE OR AN UPGRADE. CEO ruling
+// 2026-07-25 §2 condition 6 — SnapOG is a free demand probe with an expiry date,
+// and any friction corrupts the only measurement being run. The billing pages
+// below still exist and still reference tier prices; they are FROZEN (ruling §3),
+// reachable only if Stripe env vars are set, which they never will be.
 
 import type { ApiKey, PaidTier } from '../types';
-import { TIER_LIMITS, TIER_PRICE_CENTS } from '../types';
+import { PUBLIC_DEMO_IDENTIFIER, TIER_LIMITS, TIER_PRICE_CENTS } from '../types';
 
 /** Escape untrusted values before they hit HTML. */
 function esc(value: string): string {
@@ -42,7 +53,7 @@ const TIER_PERKS: Record<PaidTier, string[]> = {
 };
 
 const CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,700;1,400&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,700;1,400&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&family=Instrument+Serif:ital@0;1&display=swap');
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -60,6 +71,9 @@ const CSS = `
     --red:     #EF4444;
     --font-mono: 'JetBrains Mono', 'Consolas', monospace;
     --font-sans: 'DM Sans', system-ui, sans-serif;
+    /* Display face. Editorial serif against terminal mono — the product renders
+       typography for a living, so the page had better set some. */
+    --font-display: 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
     --r: 6px;
     --r-lg: 12px;
     --shadow: 0 0 0 1px var(--border);
@@ -234,44 +248,6 @@ const CSS = `
     font-family: var(--font-mono); font-size: 10px; color: var(--text-3);
     border: 1px solid var(--border); border-radius: 3px; padding: 1px 6px;
   }
-
-  /* Pricing */
-  .pricing-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 48px; }
-  .pricing-card {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--r-lg); padding: 32px;
-    display: flex; flex-direction: column;
-    transition: border-color 0.2s;
-  }
-  .pricing-card:hover { border-color: var(--accent); }
-  .pricing-card.featured {
-    border-color: var(--accent);
-    background: linear-gradient(180deg, #1C1400 0%, var(--surface) 100%);
-  }
-  .pricing-tier {
-    font-family: var(--font-mono); font-size: 11px; color: var(--text-3);
-    letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 16px;
-  }
-  .pricing-tier-featured { color: var(--accent); }
-  .pricing-price {
-    font-size: 40px; font-weight: 700; letter-spacing: -0.03em;
-    margin-bottom: 4px; line-height: 1;
-  }
-  .pricing-period { font-size: 14px; color: var(--text-2); margin-bottom: 24px; }
-  .pricing-limit {
-    font-family: var(--font-mono); font-size: 13px; color: var(--text-2);
-    margin-bottom: 20px; padding-bottom: 20px;
-    border-bottom: 1px solid var(--border);
-  }
-  .pricing-features { list-style: none; flex: 1; }
-  .pricing-features li {
-    font-size: 14px; color: var(--text-2); padding: 6px 0;
-    display: flex; gap: 8px; align-items: flex-start;
-  }
-  .pricing-features li::before { content: '→'; color: var(--accent); flex-shrink: 0; }
-  .pricing-features li.dim::before { color: var(--text-3); }
-  .pricing-features li.dim { color: var(--text-3); }
-  .pricing-cta { margin-top: 28px; }
 
   /* Features grid */
   .features-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; margin-top: 48px; }
@@ -457,29 +433,6 @@ const CSS = `
   }
   .status-trialing { color: var(--teal); border-color: #115E59; background: #0A2A2A; }
 
-  .upgrade-options { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px; }
-  .upgrade-option {
-    display: block; padding: 16px; border-radius: var(--r);
-    border: 1px solid var(--border); background: var(--bg);
-    transition: border-color 0.15s, transform 0.15s;
-  }
-  .upgrade-option:hover {
-    border-color: var(--accent); text-decoration: none; transform: translateY(-2px);
-  }
-  .upgrade-option .uo-tier {
-    font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em;
-    text-transform: uppercase; color: var(--text-3);
-  }
-  .upgrade-option .uo-price {
-    font-size: 22px; font-weight: 700; color: var(--text-1);
-    letter-spacing: -0.02em; margin: 4px 0 2px;
-  }
-  .upgrade-option .uo-price small { font-size: 12px; font-weight: 400; color: var(--text-3); }
-  .upgrade-option .uo-limit {
-    font-family: var(--font-mono); font-size: 11px; color: var(--accent);
-  }
-  .upgrade-option.featured { border-color: var(--accent-dim); background: linear-gradient(180deg,#1C1400,var(--bg)); }
-
   /* ── Credential cards: publishable vs secret ── */
   .key-card { position: relative; overflow: hidden; }
   .key-card::before {
@@ -564,10 +517,8 @@ const CSS = `
   }
 
   @media (max-width: 768px) {
-    .pricing-grid { grid-template-columns: 1fr; }
     .features-grid { grid-template-columns: 1fr; }
     .dash-grid { grid-template-columns: 1fr; }
-    .upgrade-options { grid-template-columns: 1fr; }
     .hero h1 { font-size: 36px; }
   }
 `;
@@ -579,7 +530,7 @@ function layout(title: string, body: string, extraHead = ''): string {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${title} — SnapOG</title>
-  <meta name="description" content="Generate stunning Open Graph images via API. Hosted on Cloudflare edge, cached globally, delivered in milliseconds." />
+  <meta name="description" content="A free Open Graph image endpoint. One URL in your &lt;head&gt;, a 1200x630 PNG out. No account needed to try it, no price, no watermark." />
   <style>${CSS}</style>
   ${extraHead}
 </head>
@@ -589,14 +540,20 @@ function layout(title: string, body: string, extraHead = ''): string {
 </html>`;
 }
 
+/**
+ * No "Pricing" link, because there is no pricing (ruling §2 condition 6).
+ * The nav CTA is deliberately soft — "Claim an identifier", not "Get started" —
+ * because the page's real call to action is the copy button on the URL, which
+ * needs no account at all.
+ */
 function nav(_activePath = '/'): string {
   return `
   <nav class="nav">
     <a class="nav-logo" href="/">Snap<span>OG</span></a>
     <div class="nav-links">
-      <a href="/#how-it-works">Docs</a>
-      <a href="/#pricing">Pricing</a>
-      <a href="/register" class="btn btn-primary">Get API Key →</a>
+      <a href="/#docs">Docs</a>
+      <a href="/#honest">Why it's free</a>
+      <a href="/register" class="btn btn-ghost">Claim an identifier</a>
     </div>
   </nav>`;
 }
@@ -605,219 +562,484 @@ function footer(): string {
   return `
   <footer class="footer">
     <div class="container">
-      snapog.dev — OG images at the edge. Built with ♥ on Cloudflare Workers.
+      SnapOG · Open Graph images on Cloudflare Workers · free, unwatermarked, no account required
     </div>
   </footer>`;
 }
 
+/**
+ * Landing-page-only styling, injected via `extraHead` rather than bolted onto
+ * the shared CSS — nothing else in the product has a masthead or a forge, and
+ * the dashboard should not carry the bytes.
+ */
+const LANDING_CSS = `
+  /* ── Masthead ───────────────────────────────────────────────────────────── */
+  .mast { padding: 88px 0 0; position: relative; overflow: hidden; }
+  /* Amber bloom behind the masthead: atmosphere, not a gradient headline. */
+  .mast::before {
+    content: ''; position: absolute; top: -240px; left: 50%;
+    width: 900px; height: 520px; transform: translateX(-50%);
+    background: radial-gradient(ellipse at center, rgba(245,158,11,0.13), transparent 68%);
+    pointer-events: none;
+  }
+  .mast > * { position: relative; }
+  .mast-flag {
+    display: inline-flex; align-items: center; gap: 9px;
+    font-family: var(--font-mono); font-size: 11px; color: var(--accent);
+    letter-spacing: 0.14em; text-transform: uppercase;
+    border: 1px solid var(--accent-dim); border-radius: 100px;
+    padding: 5px 15px; margin-bottom: 30px;
+  }
+  .mast-flag::before {
+    content: ''; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent); animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(0.75); }
+  }
+  .mast h1 {
+    font-family: var(--font-display);
+    font-size: clamp(48px, 8.5vw, 104px);
+    font-weight: 400; line-height: 0.94; letter-spacing: -0.02em;
+    color: var(--text-1); margin-bottom: 28px; max-width: 15ch;
+  }
+  .mast h1 em { font-style: italic; color: var(--accent); }
+  .mast-sub {
+    font-size: 19px; color: var(--text-2); max-width: 54ch; line-height: 1.6;
+  }
+  .mast-sub strong { color: var(--text-1); font-weight: 500; }
+
+  /* ── The forge: type a title, watch the real endpoint render it ─────────── */
+  .forge { margin: 56px 0 0; }
+  .forge-frame {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; padding: 14px;
+    box-shadow: 0 0 0 1px rgba(245,158,11,0.09), 0 48px 90px -30px rgba(0,0,0,0.9);
+  }
+  .forge-bar {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 4px 6px 16px;
+  }
+  .forge-input {
+    flex: 1 1 260px; min-width: 0;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--r); padding: 12px 16px;
+    font-family: var(--font-display); font-size: 20px; color: var(--text-1);
+    outline: none; transition: border-color 0.15s;
+  }
+  .forge-input:focus { border-color: var(--accent); }
+  .forge-input::placeholder { color: var(--text-3); font-style: italic; }
+  .seg { display: flex; gap: 2px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); padding: 3px; }
+  .seg button {
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--text-3);
+    background: transparent; border: 0; cursor: pointer;
+    padding: 7px 13px; border-radius: 4px; transition: all 0.15s;
+  }
+  .seg button:hover { color: var(--text-1); }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #000; }
+  .forge-stage { position: relative; border-radius: 10px; overflow: hidden; background: var(--bg); }
+  .forge-stage img { width: 100%; display: block; aspect-ratio: 1200 / 630; }
+  .forge-stage.busy img { opacity: 0.45; transition: opacity 0.15s; }
+  .forge-stamp {
+    position: absolute; bottom: 10px; right: 10px;
+    font-family: var(--font-mono); font-size: 10px; color: var(--text-2);
+    background: rgba(10,10,10,0.82); border: 1px solid var(--border);
+    padding: 3px 9px; border-radius: 100px; letter-spacing: 0.06em;
+  }
+
+  /* ── The payload: the URL, and the button that takes it ─────────────────── */
+  .payload { margin-top: 14px; }
+  .payload-label {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 9px;
+    font-family: var(--font-mono); font-size: 11px; color: var(--accent);
+    letter-spacing: 0.12em; text-transform: uppercase;
+  }
+  .payload-label::after { content: ''; flex: 1; height: 1px; background: var(--divider); }
+  .payload-row { display: flex; gap: 10px; align-items: stretch; }
+  .payload-url {
+    flex: 1; min-width: 0;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--r);
+    padding: 13px 16px; font-family: var(--font-mono); font-size: 12.5px;
+    color: var(--text-2); line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+  .payload-url b { color: var(--accent); font-weight: 400; }
+  .btn-copy {
+    flex: 0 0 auto; padding: 0 26px; font-size: 13px;
+    background: var(--accent); color: #000;
+    font-family: var(--font-mono); border: 0; border-radius: var(--r);
+    cursor: pointer; transition: background 0.15s;
+  }
+  .btn-copy:hover { background: #FBBF24; }
+  .btn-copy.done { background: var(--teal); }
+
+  /* ── Section rhythm ─────────────────────────────────────────────────────── */
+  .rule { border: 0; border-top: 1px solid var(--border); margin: 88px 0 0; }
+  .sec { padding: 72px 0 0; }
+  .sec-kicker {
+    font-family: var(--font-mono); font-size: 11px; color: var(--accent);
+    letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 14px;
+  }
+  .sec h2 {
+    font-family: var(--font-display); font-weight: 400;
+    font-size: clamp(30px, 4.4vw, 46px); letter-spacing: -0.015em;
+    line-height: 1.06; margin-bottom: 16px;
+  }
+  .sec h2 em { font-style: italic; color: var(--accent); }
+  .sec-lede { font-size: 17px; color: var(--text-2); max-width: 60ch; line-height: 1.65; }
+
+  /* ── Honest block: what replaced the pricing table ──────────────────────── */
+  .honest {
+    border: 1px solid var(--accent-dim); border-radius: var(--r-lg);
+    background: linear-gradient(180deg, rgba(245,158,11,0.05), transparent 62%);
+    padding: 38px; margin-top: 34px;
+  }
+  .honest dl { display: grid; grid-template-columns: 180px 1fr; gap: 18px 28px; }
+  .honest dt {
+    font-family: var(--font-mono); font-size: 11px; color: var(--accent);
+    letter-spacing: 0.1em; text-transform: uppercase; padding-top: 4px;
+  }
+  .honest dd { font-size: 15px; color: var(--text-2); line-height: 1.65; }
+  .honest dd strong { color: var(--text-1); font-weight: 500; }
+
+  /* ── Template gallery ───────────────────────────────────────────────────── */
+  .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 34px; }
+  .gallery figure {
+    border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden;
+    background: var(--surface); transition: border-color 0.18s, transform 0.18s;
+  }
+  .gallery figure:hover { border-color: var(--accent); transform: translateY(-3px); }
+  .gallery img { width: 100%; display: block; aspect-ratio: 1200 / 630; }
+  .gallery figcaption {
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-3);
+    letter-spacing: 0.1em; text-transform: uppercase; padding: 11px 14px;
+    border-top: 1px solid var(--border);
+  }
+
+  @media (max-width: 760px) {
+    .honest { padding: 26px; }
+    .honest dl { grid-template-columns: 1fr; gap: 6px 0; }
+    .honest dd { margin-bottom: 14px; }
+    .gallery { grid-template-columns: 1fr; }
+    .payload-row { flex-direction: column; }
+    .btn-copy { padding: 14px; }
+  }
+`;
+
+/**
+ * The landing page.
+ *
+ * This is now the ONLY thing a stranger sees before deciding whether to put our
+ * URL in their HTML, which makes it the conversion surface for the single number
+ * this product exists to move: distinct third-party apex domains with a live
+ * embed. Everything here serves that, and nothing else is allowed on the page.
+ *
+ * What is deliberately absent:
+ *   - any price, tier, or upgrade CTA (ruling §2 condition 6)
+ *   - any wall between arriving and holding a working URL — the forge below
+ *     renders against the real /og endpoint using the PUBLIC demo identifier,
+ *     so a visitor can copy a URL that works without typing an email
+ *   - the word "secret" anywhere near the identifier (condition 3)
+ *
+ * The forge's `<img>` requests carry OUR host as the Referer, so the probe's
+ * self-host exclusion drops them. Traffic from this page can never inflate the
+ * embed-domain count. See src/analytics/embed.ts.
+ */
 export function landingPage(host: string): string {
-  void host; // used in template strings below
+  const demo = PUBLIC_DEMO_IDENTIFIER;
+  const sample = (t: string, extra = '') =>
+    `/og?title=${encodeURIComponent(t)}${extra}&key=${demo}`;
 
   const body = `
   ${nav('/')}
 
-  <!-- Hero -->
-  <section class="hero">
-    <div class="container">
-      <div class="hero-eyebrow">Open Graph Images API</div>
-      <h1>OG images for every URL,<br/><em>delivered at the edge</em></h1>
-      <p class="hero-sub">
-        One API call. Instant PNG. Cached globally on Cloudflare CDN.
-        Stop hand-coding OG templates — let SnapOG generate them dynamically.
+  <section class="mast">
+    <div class="container-wide">
+      <div class="mast-flag">Free · no account · no watermark</div>
+      <h1>Open Graph images,<br/><em>from a URL.</em></h1>
+      <p class="mast-sub">
+        Put one link in your <strong>&lt;head&gt;</strong>. Get back a real
+        1200&times;630 PNG, rendered at the edge and cached forever.
+        No build step, no headless browser, no image pipeline —
+        <strong>and nothing to pay.</strong>
       </p>
-      <div class="hero-cta">
-        <a href="/register" class="btn btn-primary" style="font-size:15px;padding:12px 28px;">Get Free API Key</a>
-        <a href="/#how-it-works" class="btn btn-ghost" style="font-size:15px;padding:12px 28px;">View Docs</a>
-      </div>
 
-      <!-- Live OG preview -->
-      <div class="og-preview-wrap" style="margin-top:56px;">
-        <div class="og-preview-label">1200 × 630 PNG — rendered live</div>
-        <img
-          src="/og?title=How%20to%20Build%20a%20Billion-Dollar%20API&description=A%20deep%20dive%20into%20developer%20tools%20that%20compound%20%E2%80%94%20and%20the%20pricing%20that%20makes%20them%20survive&domain=myblog.dev&theme=dark&template=default"
-          alt="Live OG image example"
-          style="width:100%;border-radius:8px;"
-        />
+      <!-- The forge. Real endpoint, live render, copyable URL. -->
+      <div class="forge">
+        <div class="forge-frame">
+          <div class="forge-bar">
+            <input class="forge-input" id="f-title" type="text"
+                   value="Ship the thing before you price the thing"
+                   maxlength="120" spellcheck="false"
+                   aria-label="Title to render" placeholder="Type your headline…" />
+            <div class="seg" id="f-template" role="group" aria-label="Template">
+              <button type="button" data-v="default" aria-pressed="true">Default</button>
+              <button type="button" data-v="blog" aria-pressed="false">Blog</button>
+              <button type="button" data-v="article" aria-pressed="false">Article</button>
+            </div>
+            <div class="seg" id="f-theme" role="group" aria-label="Theme">
+              <button type="button" data-v="dark" aria-pressed="true">Dark</button>
+              <button type="button" data-v="light" aria-pressed="false">Light</button>
+            </div>
+          </div>
+          <div class="forge-stage" id="f-stage">
+            <img id="f-img" alt="Live preview of the generated Open Graph image"
+                 src="${sample('Ship the thing before you price the thing', '&domain=yoursite.com&theme=dark&template=default')}" />
+            <span class="forge-stamp" id="f-stamp">1200 × 630 PNG</span>
+          </div>
+        </div>
+
+        <div class="payload">
+          <p class="payload-label">Your URL — copy it into your &lt;head&gt;</p>
+          <div class="payload-row">
+            <div class="payload-url" id="f-url"></div>
+            <button class="btn-copy" id="f-copy" type="button">Copy</button>
+          </div>
+        </div>
       </div>
     </div>
   </section>
 
-  <!-- How it works -->
-  <section class="section" id="how-it-works">
-    <div class="container">
-      <p class="section-title">API Reference</p>
-      <h2 class="section-h2">One endpoint, infinite images</h2>
-      <p class="section-sub">
-        Send a GET request. Get a PNG back. Cache it in your CDN. Done.
+  <hr class="rule" />
+
+  <!-- Paste it in -->
+  <section class="sec" id="docs">
+    <div class="container-wide">
+      <p class="sec-kicker">Integration</p>
+      <h2>Four lines, then <em>never think about it again.</em></h2>
+      <p class="sec-lede">
+        The identifier below is public by design — it sits in your page source on
+        every page, so we treat it as public rather than pretending otherwise.
+        Lock it to your own domains and a stranger can't render on it.
       </p>
 
-      <div class="code-block" style="margin-top:36px;">
-        <div class="code-block-header">
-          <div class="code-block-dots">
-            <div class="dot dot-red"></div>
-            <div class="dot dot-yellow"></div>
-            <div class="dot dot-green"></div>
-          </div>
-          <span class="code-block-lang">HTTP GET</span>
-        </div>
-        <pre><span class="c-url">GET https://${host}/og</span>
-  <span class="c-comment">  ?title=</span><span class="c-str">Your Page Title Here</span>
-  <span class="c-comment">  &amp;description=</span><span class="c-str">Optional subtitle or excerpt</span>
-  <span class="c-comment">  &amp;domain=</span><span class="c-str">yourdomain.com</span>
-  <span class="c-comment">  &amp;author=</span><span class="c-str">Jane Doe</span>
-  <span class="c-comment">  &amp;template=</span><span class="c-str">default</span>  <span class="c-comment"># default | blog | article</span>
-  <span class="c-comment">  &amp;theme=</span><span class="c-str">dark</span>      <span class="c-comment"># dark | light</span>
-  <span class="c-comment">  &amp;tag=</span><span class="c-str">Tutorial</span>
-  <span class="c-comment">  &amp;key=</span><span class="c-str">sk_your_api_key</span>
-
-<span class="c-comment">← 200 OK  Content-Type: image/png  X-Cache: MISS</span></pre>
-      </div>
-
-      <h3 style="font-size:18px;font-weight:600;margin:48px 0 0;letter-spacing:-0.01em;">Parameters</h3>
-      <table class="params-table">
-        <thead>
-          <tr>
-            <th>Param</th><th>Type</th><th>Required</th><th>Description</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr><td>title</td><td>string</td><td><span class="required">required</span></td><td>Page title — the main headline (max 120 chars)</td></tr>
-          <tr><td>key</td><td>string</td><td><span class="required">required</span></td><td>Your API key (free tier = 100 images/month)</td></tr>
-          <tr><td>description</td><td>string</td><td><span class="optional">optional</span></td><td>Subtitle or page excerpt (max 200 chars)</td></tr>
-          <tr><td>domain</td><td>string</td><td><span class="optional">optional</span></td><td>Your domain shown as source label</td></tr>
-          <tr><td>author</td><td>string</td><td><span class="optional">optional</span></td><td>Author name shown in footer</td></tr>
-          <tr><td>template</td><td>enum</td><td><span class="optional">optional</span></td><td><code>default</code> | <code>blog</code> | <code>article</code></td></tr>
-          <tr><td>theme</td><td>enum</td><td><span class="optional">optional</span></td><td><code>dark</code> (default) | <code>light</code></td></tr>
-          <tr><td>tag</td><td>string</td><td><span class="optional">optional</span></td><td>Category label shown as pill (e.g. "Tutorial")</td></tr>
-        </tbody>
-      </table>
-
-      <h3 style="font-size:18px;font-weight:600;margin:48px 0 20px;letter-spacing:-0.01em;">Use in HTML</h3>
       <div class="code-block">
         <div class="code-block-header">
           <div class="code-block-dots">
             <div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div>
           </div>
-          <span class="code-block-lang">HTML meta tags</span>
+          <span class="code-block-lang">HTML — in &lt;head&gt;</span>
         </div>
-        <pre><span class="c-comment">&lt;!-- Drop in &lt;head&gt; --&gt;</span>
-<span class="c-key">&lt;meta</span> <span class="c-val">property=</span><span class="c-str">"og:image"</span>
-      <span class="c-val">content=</span><span class="c-str">"https://${host}/og?title=My+Post+Title&amp;key=YOUR_KEY"</span> <span class="c-key">/&gt;</span>
-<span class="c-key">&lt;meta</span> <span class="c-val">property=</span><span class="c-str">"og:image:width"</span>  <span class="c-val">content=</span><span class="c-str">"1200"</span> <span class="c-key">/&gt;</span>
-<span class="c-key">&lt;meta</span> <span class="c-val">property=</span><span class="c-str">"og:image:height"</span> <span class="c-val">content=</span><span class="c-str">"630"</span>  <span class="c-key">/&gt;</span>
-<span class="c-key">&lt;meta</span> <span class="c-val">name=</span><span class="c-str">"twitter:card"</span>    <span class="c-val">content=</span><span class="c-str">"summary_large_image"</span> <span class="c-key">/&gt;</span>
-<span class="c-key">&lt;meta</span> <span class="c-val">name=</span><span class="c-str">"twitter:image"</span>   <span class="c-val">content=</span><span class="c-str">"https://${host}/og?title=My+Post+Title&amp;key=YOUR_KEY"</span> <span class="c-key">/&gt;</span></pre>
+        <pre id="f-meta"></pre>
+      </div>
+
+      <h3 style="font-family:var(--font-display);font-size:26px;font-weight:400;margin:56px 0 0;">Parameters</h3>
+      <table class="params-table">
+        <thead><tr><th>Param</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td>title</td><td>string</td><td><span class="required">required</span></td><td>The headline (max 120 chars)</td></tr>
+          <tr><td>key</td><td>string</td><td><span class="required">required</span></td><td>Your public site identifier — <code>pk_…</code></td></tr>
+          <tr><td>description</td><td>string</td><td><span class="optional">optional</span></td><td>Subtitle or excerpt (max 200 chars)</td></tr>
+          <tr><td>domain</td><td>string</td><td><span class="optional">optional</span></td><td>Source label shown on the card</td></tr>
+          <tr><td>author</td><td>string</td><td><span class="optional">optional</span></td><td>Byline in the footer</td></tr>
+          <tr><td>template</td><td>enum</td><td><span class="optional">optional</span></td><td><code>default</code> | <code>blog</code> | <code>article</code></td></tr>
+          <tr><td>theme</td><td>enum</td><td><span class="optional">optional</span></td><td><code>dark</code> (default) | <code>light</code></td></tr>
+          <tr><td>tag</td><td>string</td><td><span class="optional">optional</span></td><td>Category pill (e.g. "Tutorial")</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <hr class="rule" />
+
+  <!-- Templates -->
+  <section class="sec">
+    <div class="container-wide">
+      <p class="sec-kicker">Templates</p>
+      <h2>Three of them. <em>All unwatermarked.</em></h2>
+      <p class="sec-lede">
+        Every one is yours clean — we do not put our name on your card. Each also
+        has a light variant.
+      </p>
+      <div class="gallery">
+        <figure>
+          <img loading="lazy" alt="Default template"
+               src="${sample('The default card', '&description=Balanced, works for anything&domain=yoursite.com&tag=Default&template=default')}" />
+          <figcaption>default</figcaption>
+        </figure>
+        <figure>
+          <img loading="lazy" alt="Blog template"
+               src="${sample('An editorial blog card', '&description=Serif, for writing&author=Jane Doe&domain=yoursite.com&template=blog')}" />
+          <figcaption>blog</figcaption>
+        </figure>
+        <figure>
+          <img loading="lazy" alt="Article template"
+               src="${sample('The article layout', '&description=Rules and category labels&tag=Guide&domain=yoursite.com&template=article')}" />
+          <figcaption>article</figcaption>
+        </figure>
       </div>
     </div>
   </section>
 
-  <!-- Features -->
-  <section class="section" style="padding-top:0;">
-    <div class="container">
-      <p class="section-title">Why SnapOG</p>
-      <h2 class="section-h2">Built for production, priced for teams</h2>
-      <div class="features-grid">
-        <div class="feature-card">
-          <span class="feature-icon">⚡</span>
-          <h3>Edge-cached globally</h3>
-          <p>Images are generated once and stored on Cloudflare R2. Subsequent requests hit the cache in under 50ms worldwide.</p>
-        </div>
-        <div class="feature-card">
-          <span class="feature-icon">🎨</span>
-          <h3>3 templates out of the box</h3>
-          <p>Default, Blog, and Article templates — dark and light variants. No design work needed.</p>
-        </div>
-        <div class="feature-card">
-          <span class="feature-icon">🔑</span>
-          <h3>Instant API key</h3>
-          <p>Sign up with email, get a key immediately. 100 images free, no credit card required.</p>
-        </div>
-        <div class="feature-card">
-          <span class="feature-icon">📊</span>
-          <h3>Usage dashboard</h3>
-          <p>Track how many images you've generated, reset date, and tier status in a clean developer dashboard.</p>
-        </div>
+  <hr class="rule" />
+
+  <!-- Where the pricing table used to be. -->
+  <section class="sec" id="honest">
+    <div class="container-wide">
+      <p class="sec-kicker">The honest part</p>
+      <h2>It's free because <em>we don't know if you want it.</em></h2>
+      <p class="sec-lede">
+        Most tools in this category start at $14–$49 a month. We haven't earned
+        that, and we'd rather find out whether this is useful than guess at a
+        price. So here is the whole arrangement, with nothing behind it.
+      </p>
+
+      <div class="honest">
+        <dl>
+          <dt>What it costs</dt>
+          <dd><strong>Nothing.</strong> There is no paid plan, no trial clock, no card
+              on file, and no upgrade button anywhere on this site.</dd>
+
+          <dt>The limit</dt>
+          <dd><strong>${TIER_LIMITS.free.toLocaleString()} unique images a month</strong>, per identifier.
+              Re-serving an image you already generated is free and unlimited — a post
+              that gets shared ten thousand times costs you one image, not ten thousand.</dd>
+
+          <dt>Watermark</dt>
+          <dd><strong>None, ever.</strong> It's your marketing asset shown to your
+              audience. Branding it to sell you the removal would be a shabby trick.</dd>
+
+          <dt>What we record</dt>
+          <dd>The <strong>domain</strong> in the <code>Referer</code> of each request —
+              just the domain, so we can count how many sites use this. No cookies,
+              no visitor tracking, no analytics script, nothing about your readers.</dd>
+
+          <dt>If it dies</dt>
+          <dd>We've given ourselves until <strong>October</strong> to see if anyone
+              actually uses it. Cards already generated are cached, so nothing goes
+              blank without warning — and swapping the URL back out is a
+              find-and-replace. We'd rather say that now than surprise you later.</dd>
+        </dl>
       </div>
     </div>
   </section>
 
-  <!-- Pricing -->
-  <section class="section" id="pricing">
-    <div class="container">
-      <p class="section-title">Pricing</p>
-      <h2 class="section-h2">Start free. Scale as you publish.</h2>
-      <div class="pricing-grid">
+  <hr class="rule" />
 
-        <div class="pricing-card">
-          <p class="pricing-tier">Free</p>
-          <p class="pricing-price">$0</p>
-          <p class="pricing-period">forever</p>
-          <p class="pricing-limit">100 images / month</p>
-          <ul class="pricing-features">
-            <li>3 templates (dark + light)</li>
-            <li>R2 global cache</li>
-            <li>API key + dashboard</li>
-            <li class="dim">SnapOG watermark</li>
-            <li class="dim">No custom fonts</li>
-          </ul>
-          <div class="pricing-cta">
-            <a href="/register" class="btn btn-ghost" style="width:100%;">Get started →</a>
-          </div>
-        </div>
-
-        <div class="pricing-card featured">
-          <p class="pricing-tier pricing-tier-featured">⚡ Pro — most popular</p>
-          <p class="pricing-price" style="color:var(--accent);">$19</p>
-          <p class="pricing-period">per month</p>
-          <p class="pricing-limit" style="color:var(--accent);">10,000 images / month</p>
-          <ul class="pricing-features">
-            <li>Everything in Free</li>
-            <li>No watermark</li>
-            <li>Custom font upload</li>
-            <li>Usage analytics</li>
-            <li>Priority support</li>
-          </ul>
-          <div class="pricing-cta">
-            <a href="/register?tier=pro" class="btn btn-primary" style="width:100%;">Start Pro →</a>
-          </div>
-        </div>
-
-        <div class="pricing-card">
-          <p class="pricing-tier">Business</p>
-          <p class="pricing-price">$49</p>
-          <p class="pricing-period">per month</p>
-          <p class="pricing-limit">100,000 images / month</p>
-          <ul class="pricing-features">
-            <li>Everything in Pro</li>
-            <li>Custom domain (CNAME)</li>
-            <li>Team access (3 seats)</li>
-            <li>White-label (no branding)</li>
-            <li>SLA + priority queue</li>
-          </ul>
-          <div class="pricing-cta">
-            <a href="/register?tier=business" class="btn btn-ghost" style="width:100%;">Start Business →</a>
-          </div>
-        </div>
-
-      </div>
+  <!-- Soft CTA. Not a wall — the forge above already handed them a working URL. -->
+  <section class="sec" style="padding-bottom:96px;">
+    <div class="container-wide">
+      <p class="sec-kicker">Optional</p>
+      <h2>Want your own identifier?</h2>
+      <p class="sec-lede" style="margin-bottom:30px;">
+        The one in the URL above is a shared demo — it works, and you're welcome to
+        ship with it. Your own takes an email and no password, and it lets you do the
+        one thing the demo can't: <strong style="color:var(--text-1);">restrict rendering to your
+        domains</strong>, so nobody else can use your identifier on their site.
+      </p>
+      <a href="/register" class="btn btn-primary" style="font-size:15px;padding:14px 30px;">
+        Claim an identifier →
+      </a>
+      <a href="/dashboard" class="btn btn-ghost" style="font-size:15px;padding:14px 30px;margin-left:10px;">
+        I already have one
+      </a>
     </div>
   </section>
 
   ${footer()}
 
   <script>
-    // Copy to clipboard helper
-    document.querySelectorAll('[data-copy]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        navigator.clipboard.writeText(btn.dataset.copy || '');
-        const orig = btn.textContent;
-        btn.textContent = 'Copied!';
-        setTimeout(() => { btn.textContent = orig; }, 1500);
+    (function () {
+      var DEMO = ${JSON.stringify(demo)};
+      var titleEl = document.getElementById('f-title');
+      var imgEl   = document.getElementById('f-img');
+      var stageEl = document.getElementById('f-stage');
+      var urlEl   = document.getElementById('f-url');
+      var metaEl  = document.getElementById('f-meta');
+      var copyEl  = document.getElementById('f-copy');
+      var stampEl = document.getElementById('f-stamp');
+      var template = 'default';
+      var theme = 'dark';
+      var timer = null;
+
+      function query() {
+        var t = (titleEl.value || 'Your page title').slice(0, 120);
+        return '/og?title=' + encodeURIComponent(t) +
+               '&domain=yoursite.com' +
+               '&theme=' + theme +
+               '&template=' + template +
+               '&key=' + DEMO;
+      }
+      function absolute() { return location.origin + query(); }
+
+      // textContent everywhere — the title is user input and must never be
+      // parsed as markup, even though it is only ever this visitor's own typing.
+      function paint() {
+        var abs = absolute();
+        urlEl.textContent = abs;
+        metaEl.textContent =
+          '<meta property="og:image" content="' + abs + '" />\n' +
+          '<meta property="og:image:width" content="1200" />\n' +
+          '<meta property="og:image:height" content="630" />\n' +
+          '<meta name="twitter:card" content="summary_large_image" />';
+      }
+
+      function render() {
+        stageEl.classList.add('busy');
+        stampEl.textContent = 'rendering…';
+        imgEl.src = query();
+        paint();
+      }
+
+      imgEl.addEventListener('load', function () {
+        stageEl.classList.remove('busy');
+        stampEl.textContent = '1200 × 630 PNG';
       });
-    });
+      imgEl.addEventListener('error', function () {
+        stageEl.classList.remove('busy');
+        stampEl.textContent = 'render failed';
+      });
+
+      titleEl.addEventListener('input', function () {
+        paint();
+        clearTimeout(timer);
+        timer = setTimeout(render, 450);
+      });
+
+      function wireSegment(id, apply) {
+        var group = document.getElementById(id);
+        group.addEventListener('click', function (e) {
+          var btn = e.target.closest('button[data-v]');
+          if (!btn) return;
+          Array.prototype.forEach.call(group.querySelectorAll('button'), function (b) {
+            b.setAttribute('aria-pressed', String(b === btn));
+          });
+          apply(btn.getAttribute('data-v'));
+          render();
+        });
+      }
+      wireSegment('f-template', function (v) { template = v; });
+      wireSegment('f-theme', function (v) { theme = v; });
+
+      copyEl.addEventListener('click', function () {
+        var text = absolute();
+        var done = function () {
+          copyEl.textContent = 'Copied';
+          copyEl.classList.add('done');
+          setTimeout(function () {
+            copyEl.textContent = 'Copy';
+            copyEl.classList.remove('done');
+          }, 1600);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, done);
+        } else {
+          // http:// origins get no clipboard API — local dev, mostly.
+          var ta = document.createElement('textarea');
+          ta.value = text; document.body.appendChild(ta); ta.select();
+          try { document.execCommand('copy'); } catch (err) { /* nothing to do */ }
+          document.body.removeChild(ta); done();
+        }
+      });
+
+      paint();
+    })();
   </script>`;
 
-  return layout('Generate OG images at the edge', body);
+  void host; // the forge derives its URLs from location.origin, client-side
+  return layout('Free Open Graph images from a URL', body, `<style>${LANDING_CSS}</style>`);
 }
 
 function isPaid(tier?: string): tier is PaidTier {

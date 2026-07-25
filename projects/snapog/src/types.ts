@@ -80,6 +80,21 @@ export interface ApiKey {
 /** Which half of the credential pair a request presented. */
 export type KeyKind = 'secret' | 'publishable';
 
+/**
+ * The public demo site identifier, seeded by migration 0004.
+ *
+ * Published in our own HTML on purpose. Ruling §2 condition 3 says the
+ * identifier IS public — it lives in the customer's page source on every page,
+ * forever — so there is nothing to protect by hiding this one, and printing it
+ * means a stranger can copy a working URL without an email, an account, or a
+ * decision. That is the zero-friction path condition 6 demands.
+ *
+ * Enforcement for real users is the per-domain referrer allowlist, not secrecy.
+ * The demo row deliberately has no allowlist, which is exactly why it is labelled
+ * as shared and why the page tells people to claim their own.
+ */
+export const PUBLIC_DEMO_IDENTIFIER = 'pk_demo_snapog_public_2026';
+
 export interface User {
   id: string;
   email: string;
