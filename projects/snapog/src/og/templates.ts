@@ -143,12 +143,16 @@ function Header(domain: string | undefined, tag: string | undefined, accent: str
   };
 }
 
-// Footer row: author on left, watermark on right
-function Footer(
-  author: string | undefined,
-  watermark: boolean,
-  secondary: string
-): VNode {
+/**
+ * Footer row: the author line, and nothing else.
+ *
+ * There used to be a 'snapog.dev' mark on the right for free-tier renders.
+ * Removed under CEO ruling §2 condition 5 — the output of this file ends up in
+ * a stranger's `<meta og:image>` and gets shown to THEIR audience. Putting our
+ * name on someone else's marketing asset to sell them the removal is a
+ * dealbreaker, not an upsell, and during the probe there is nothing to sell.
+ */
+function Footer(author: string | undefined, secondary: string): VNode {
   return {
     type: 'div',
     props: {
@@ -173,28 +177,13 @@ function Footer(
               },
             }
           : { type: 'div', props: { style: { width: '1px' }, children: null } },
-        watermark
-          ? {
-              type: 'div',
-              props: {
-                style: {
-                  fontSize: '14px',
-                  color: secondary,
-                  fontFamily: '"Noto Sans", sans-serif',
-                  opacity: '0.55',
-                  letterSpacing: '0.06em',
-                },
-                children: 'snapog.dev',
-              },
-            }
-          : { type: 'div', props: { style: { width: '1px' }, children: null } },
       ],
     },
   };
 }
 
 // Default template — general purpose
-function defaultTemplate(params: OGParams, watermark: boolean): VNode {
+function defaultTemplate(params: OGParams): VNode {
   const { title, description, domain, author, tag, theme = 'dark' } = params;
   const isDark = theme === 'dark';
 
@@ -240,14 +229,14 @@ function defaultTemplate(params: OGParams, watermark: boolean): VNode {
             maxWidth: '900px',
           }
         ),
-        Footer(author, watermark, secondary),
+        Footer(author, secondary),
       ],
     },
   };
 }
 
 // Blog template — date-focused, editorial feel
-function blogTemplate(params: OGParams, watermark: boolean): VNode {
+function blogTemplate(params: OGParams): VNode {
   const { title, description, domain, author, tag, theme = 'dark' } = params;
   const isDark = theme === 'dark';
 
@@ -308,14 +297,14 @@ function blogTemplate(params: OGParams, watermark: boolean): VNode {
             fontStyle: 'italic',
           }
         ),
-        Footer(author, watermark, secondary),
+        Footer(author, secondary),
       ],
     },
   };
 }
 
 // Article template — minimal, high-contrast, magazine aesthetic
-function articleTemplate(params: OGParams, watermark: boolean): VNode {
+function articleTemplate(params: OGParams): VNode {
   const { title, description, domain, author, tag, theme = 'dark' } = params;
   const isDark = theme === 'dark';
 
@@ -452,20 +441,6 @@ function articleTemplate(params: OGParams, watermark: boolean): VNode {
                     },
                   }
                 : { type: 'div', props: { style: { width: '1px' }, children: null } },
-              watermark
-                ? {
-                    type: 'div',
-                    props: {
-                      style: {
-                        fontSize: '13px',
-                        color: secondary,
-                        opacity: '0.5',
-                        letterSpacing: '0.06em',
-                      },
-                      children: 'snapog.dev',
-                    },
-                  }
-                : { type: 'div', props: { style: { width: '1px' }, children: null } },
             ],
           },
         },
@@ -478,9 +453,17 @@ function articleTemplate(params: OGParams, watermark: boolean): VNode {
  * Shown when a key is over its monthly render quota.
  *
  * Takes NO parameters on purpose — it must be a single cacheable image, or it
- * becomes an unmetered render endpoint. It also has to be inoffensive: this ends
- * up on a paying-soon customer's social cards, so it reads as a neutral system
- * notice rather than an error, and it tells whoever sees it what to do.
+ * becomes an unmetered render endpoint.
+ *
+ * It carries NO branding. It used to sign off 'snapog.dev', which meant our name
+ * appeared on a stranger's social card at the exact moment we had failed them.
+ * Removed with the tier watermark under ruling §2 condition 5 — the reasoning is
+ * even stronger here than on a successful render.
+ *
+ * With the free limit at 10,000 renders/month this should be effectively
+ * unreachable during the probe. It stays because condition 2 requires that
+ * running out degrades to a valid PNG rather than breaking a live site, and the
+ * cheapest way to keep that promise true is to keep the code that keeps it.
  */
 export function quotaExceededElement(): VNode {
   return {
@@ -541,31 +524,18 @@ export function quotaExceededElement(): VNode {
             children: 'The site owner has used their monthly quota. Images resume on the 1st.',
           },
         },
-        {
-          type: 'div',
-          props: {
-            style: {
-              display: 'flex',
-              marginTop: '56px',
-              fontSize: '17px',
-              color: '#525252',
-              letterSpacing: '0.08em',
-            },
-            children: 'snapog.dev',
-          },
-        },
       ],
     },
   };
 }
 
-export function buildElement(params: OGParams, watermark: boolean): VNode {
+export function buildElement(params: OGParams): VNode {
   switch (params.template) {
     case 'blog':
-      return blogTemplate(params, watermark);
+      return blogTemplate(params);
     case 'article':
-      return articleTemplate(params, watermark);
+      return articleTemplate(params);
     default:
-      return defaultTemplate(params, watermark);
+      return defaultTemplate(params);
   }
 }

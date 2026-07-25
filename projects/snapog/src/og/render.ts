@@ -36,11 +36,8 @@ const FONTS = [
   { name: 'Noto Serif', data: serif700, weight: 700 as const, style: 'normal' as const },
 ];
 
-export async function generateOGImage(
-  params: OGParams,
-  watermark: boolean
-): Promise<Response> {
-  const element = buildElement(params, watermark);
+export async function generateOGImage(params: OGParams): Promise<Response> {
+  const element = buildElement(params);
 
   const response = new ImageResponse(element, {
     width: OG_WIDTH,
@@ -68,12 +65,17 @@ export async function generateQuotaExceededImage(): Promise<Response> {
 /** Fixed R2 key for the placeholder — never parameterised. */
 export const QUOTA_EXCEEDED_R2_KEY = 'og/_system/quota-exceeded-v1.png';
 
-// Build a deterministic cache key from OG params
-export async function buildCacheKey(params: OGParams, watermark: boolean): Promise<string> {
+/**
+ * Deterministic cache key from OG params.
+ *
+ * Used to include a `watermark` flag, because a free-tier render and a paid one
+ * produced different pixels for identical params. Nothing varies by tier any
+ * more (ruling §2 condition 5), so the key is the params and nothing else —
+ * which also means every customer asking for the same image shares one render.
+ */
+export async function buildCacheKey(params: OGParams): Promise<string> {
   const sorted = JSON.stringify(
-    Object.fromEntries(
-      Object.entries({ ...params, watermark }).sort(([a], [b]) => a.localeCompare(b))
-    )
+    Object.fromEntries(Object.entries({ ...params }).sort(([a], [b]) => a.localeCompare(b)))
   );
   const encoder = new TextEncoder();
   const data = encoder.encode(sorted);

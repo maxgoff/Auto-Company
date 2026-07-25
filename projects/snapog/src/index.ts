@@ -42,6 +42,7 @@ import {
   webhookSecret,
 } from './billing/stripe';
 import { applyEvent, claimEvent, releaseEvent } from './billing/webhook';
+import { observeEmbed, recordEmbed } from './analytics/embed';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -206,6 +207,40 @@ app.get('/og', async c => {
   let apiKey = resolved.row;
   const keyKind = resolved.kind;
 
+  // ── THE PROBE ──
+  // CEO ruling §2 condition 4. This single call is why SnapOG is still alive:
+  // it produces `embed_domains`, the only number in the Ledger that comes from
+  // strangers rather than from us. It sits here — immediately after the key
+  // resolves and BEFORE every branch below — so that "every /og hit, including
+  // cache hits" is true by construction rather than by four call sites staying
+  // in sync. Fire-and-forget: the PNG never waits on it and never fails with it.
+  try {
+    const obs = observeEmbed(
+      c.req.header('referer') ?? null,
+      c.req.header('origin') ?? null,
+      url.host,
+      c.req.header('user-agent') ?? null
+    );
+    c.executionCtx.waitUntil(recordEmbed(c.env.DB, obs));
+  } catch (err) {
+    console.error('embed probe failed:', err);
+  }
+
+  // The documented, published credential is the pk_ identifier. A sk_ in a URL
+  // means someone pasted the wrong string into their page source; it still
+  // renders (a 401 during a probe is friction we cannot afford), but it is a
+  // misconfiguration we want to be able to find in Workers Logs rather than
+  // discover from a support email we will never receive.
+  if (keyKind === 'secret') {
+    console.warn(
+      JSON.stringify({
+        evt: 'sk_used_for_render',
+        key_prefix: apiKey.key_prefix,
+        hint: 'embed the pk_ site identifier instead',
+      })
+    );
+  }
+
   // ── Domain allowlist ──
   // Refused renders do not touch quota: an attacker must never be able to
   // exhaust a customer's month, and the customer must not pay for our refusal.
@@ -262,8 +297,12 @@ app.get('/og', async c => {
   };
   const template = params.template ?? 'default';
 
-  const watermark = apiKey.tier === 'free';
-  const cacheKey = await buildCacheKey(params, watermark);
+  // No watermark, on any tier. CEO ruling §2 condition 5: watermarking a
+  // customer's own marketing asset is a dealbreaker, not an upsell — we are
+  // buying information here, not squeezing a funnel that does not exist. The
+  // cache key no longer varies by tier either, so two keys asking for the same
+  // image now share one render.
+  const cacheKey = await buildCacheKey(params);
   const r2Key = `og/${cacheKey}.png`;
 
   // ── R2 cache lookup, BEFORE the quota check ──
@@ -329,8 +368,8 @@ app.get('/og', async c => {
     });
   }
 
-  // ── Generate image — the one billable event ──
-  const imageResponse = await generateOGImage(params, watermark);
+  // ── Generate image — the one metered event ──
+  const imageResponse = await generateOGImage(params);
   const imageBuffer = await imageResponse.arrayBuffer();
 
   // Store in R2 (fire-and-forget, don't block response)

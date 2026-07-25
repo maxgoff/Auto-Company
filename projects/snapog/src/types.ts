@@ -5,13 +5,33 @@ export type Tier = 'free' | 'pro' | 'business';
 /** Tiers that require a completed Stripe payment. */
 export type PaidTier = Exclude<Tier, 'free'>;
 
+/**
+ * Monthly UNIQUE RENDERS. Cache hits are free and unmetered, so this is a count
+ * of distinct images, not of requests.
+ *
+ * `free` was 100 — a number chosen to make an upgrade feel necessary. There is
+ * no upgrade during the probe (ruling §2 condition 6: "any friction we add
+ * corrupts the only measurement we are running"), so its only remaining job is
+ * to stop a runaway loop from burning CPU. 10,000 is what the $19 tier used to
+ * charge for and is far past anything an honest site reaches in a month.
+ *
+ * Migration 0004 backfills existing rows; keep the two in step if this changes.
+ */
 export const TIER_LIMITS: Record<Tier, number> = {
-  free: 100,
+  free: 10_000,
   pro: 10_000,
   business: 100_000,
 };
 
-/** Monthly price in USD cents — display only; Stripe Prices are the truth. */
+/**
+ * Monthly price in USD cents.
+ *
+ * FROZEN, along with the rest of the Stripe path (ruling §3). Nothing
+ * user-facing reads this any more — no page shows a price, no route sells a
+ * tier. It survives only because the dormant billing pages reference it. Per
+ * ruling §4 the future pricing shape is a flat per-domain licence and the number
+ * is set at the 2026-09-08 gate; these two figures are not it.
+ */
 export const TIER_PRICE_CENTS: Record<Tier, number> = {
   free: 0,
   pro: 1900,
