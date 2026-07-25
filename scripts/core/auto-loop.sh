@@ -368,6 +368,45 @@ consensus_changed_since_backup() {
     return 0
 }
 
+# ------------------------------------------------------------------
+# The Ledger — CEO ruling 2026-07-25 §7, rule 2: "No exit without a row."
+# ------------------------------------------------------------------
+# ledger.sh probes four EXTERNAL sources, appends one row to
+# memories/ledger.jsonl, and stamps memories/consensus.md. It refuses to exit 0
+# unless it appended a row, so a non-zero status here means the cycle is
+# unrecorded — which is itself the signal.
+#
+# Invoked at the very END of the cycle, AFTER the restore_consensus branch, so
+# the stamp lands on the file the next cycle will actually read rather than on
+# one that is about to be rolled back.
+#
+# Deliberately NOT wired into the circuit breaker. The breaker exists for engine
+# and API failures; cooling the whole company down for COOLDOWN_SECONDS because
+# of a bug in the bookkeeping would be a worse failure than the missing row.
+# A ledger failure is loud in auto-loop.log and in the state file instead.
+run_ledger() {
+    local ledger_script="$SCRIPT_DIR/ledger.sh"
+
+    if [ ! -x "$ledger_script" ]; then
+        log_cycle "$loop_count" "LEDGER-FAIL" "$ledger_script is missing or not executable — this cycle is UNRECORDED"
+        return 1
+    fi
+
+    local out rc=0
+    out=$("$ledger_script" 2>&1) || rc=$?
+
+    if [ "$rc" -eq 0 ]; then
+        local verdict
+        verdict=$(echo "$out" | grep -m1 '^VERDICT:' || echo "VERDICT: (unparsed)")
+        log_cycle "$loop_count" "LEDGER" "$verdict"
+    else
+        log_cycle "$loop_count" "LEDGER-FAIL" "ledger.sh exited $rc — no row appended, consensus NOT stamped: $(echo "$out" | tail -3 | tr '\n' ' ')"
+        save_state "ledger_failed"
+    fi
+
+    return "$rc"
+}
+
 resolve_codex_bin() {
     if [ -n "$CODEX_BIN" ]; then
         if [ -x "$CODEX_BIN" ]; then
@@ -825,6 +864,11 @@ This is Cycle #$loop_count. Act decisively."
             log "Circuit breaker reset. Resuming..."
         fi
     fi
+
+    # Cycle end. Every cycle gets a Ledger row — including a failed one, because
+    # a cycle that crashed also moved no externally-generated number and the
+    # streak must reflect that honestly.
+    run_ledger || true
 
     save_state "idle"
     log_cycle "$loop_count" "WAIT" "Sleeping ${LOOP_INTERVAL}s before next cycle..."

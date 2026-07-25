@@ -1,0 +1,53 @@
+# Public artifacts the Ledger's live-artifact verifier must check.
+#
+# FORMAT (one per line):   <https-url> <assertion-spec>
+#
+# This file names WHICH artifact to check and WHAT must be true of it. It does
+# not and cannot assert that the check passed — that assertion is only ever made
+# by a GitHub Actions run, from a network path we do not control, in a log a
+# stranger can audit. `scripts/core/ledger.sh` reads the RESULT from the GitHub
+# API, never from here.
+#
+# CEO ruling 2026-07-25 §7:
+#   "curl from our own laptop does not count and never did."
+#
+# Empty list == zero artifacts to verify == `live_artifacts_verified: 0`.
+#
+# ---------------------------------------------------------------------------
+# ASSERTION SPECS
+# ---------------------------------------------------------------------------
+#   png:<W>x<H>        HTTP 200, content-type image/png, real PNG magic bytes,
+#                      and exactly those IHDR dimensions.
+#   sha256:<64-hex>    HTTP 200 and the body hashes to exactly this. For
+#                      immutable assets.
+#   contains:<string>  HTTP 200 and the body contains this string. Minimum 12
+#                      characters — short needles are rejected at discover time
+#                      so nobody can satisfy a spec with `contains:<html>`.
+#   echo:<param>       Strongest spec. The runner generates a fresh random nonce,
+#                      appends it as `?<param>=<nonce>`, and requires it back in
+#                      the response. A static placeholder CANNOT pass this. Use
+#                      it for anything with real compute behind it.
+#
+# There is deliberately NO bare status-code spec. `https://www.snapog.dev/`
+# returns HTTP 200 today and is a dead site advertising four products that all
+# 404. A status check would have counted it as a live artifact. The spec must be
+# something a broken or placeholder deploy would FAIL. That is the whole job.
+#
+# Whole-line `#` comments and blank lines only — there are no trailing inline
+# comments, because `#` is legal inside a URL. A malformed line is a hard failure
+# of the discover job, never a silent skip:
+# a typo'd spec that quietly dropped a URL would lower the count while looking
+# like a clean run.
+#
+# ---------------------------------------------------------------------------
+# CURRENT STATE — 2026-07-25, Cycle 4
+# ---------------------------------------------------------------------------
+# Empty. Nothing this company has built is deployed anywhere.
+#
+# `live_artifacts_verified: 0` is therefore correct and honest, and stays 0
+# until a line is added below AND GitHub — not us — confirms it.
+#
+# Retired 2026-07-25: the SnapOG Worker URL that used to sit commented out here.
+# It was blocked on CLOUDFLARE_API_TOKEN, and the product it belonged to is
+# archived (see memories/consensus.md). Its assertion, png:1200x630, is what the
+# entire verifier used to hardcode.

@@ -1,0 +1,298 @@
+name: Ledger — verify live artifact
+
+# ==============================================================================
+# The ONLY acceptable source for the Ledger's `live_artifacts_verified` number.
+#
+# CEO ruling 2026-07-25 §7:
+#   "A GitHub Actions run that curls the public URL and asserts <the artifact is
+#    what we claim it is> — the run's public log URL goes in the row. Verified
+#    from a network path we do not control, by a log a stranger can audit.
+#    `curl` from our own laptop does not count and never did."
+#
+# `scripts/core/ledger.sh` reads the RESULT of this workflow from the GitHub API:
+# it counts successful jobs whose name begins with `verify` in the most recent
+# completed run, and records that run's public URL in the Ledger row.
+#
+# Consequences of that design, which are deliberate:
+#   - No deploy credentials. No secrets at all. This job cannot mutate anything.
+#   - If nothing is deployed, the URL list is empty, zero `verify` jobs run, and
+#     the honest answer is 0. There is no code path that reports a number this
+#     workflow did not measure.
+#   - A failing assertion fails the job, which means the count drops. We do not
+#     "warn only" here; a live artifact that stopped being a live artifact is a
+#     fact the Ledger must carry.
+#
+# ------------------------------------------------------------------------------
+# GENERALIZED 2026-07-25 (Cycle 4). The previous version hardcoded
+# `content-type: image/png` at exactly 1200x630 — a SnapOG-shaped assertion. With
+# SnapOG archived that verifier could never pass again, which would have pinned
+# `live_artifacts_verified` at 0 forever for reasons that have nothing to do with
+# whether this company ships. Each URL now carries its own assertion spec.
+#
+# The rule that did NOT change, and must not: a spec has to be something a
+# BROKEN OR PLACEHOLDER deploy would FAIL. `www.snapog.dev` returns HTTP 200 and
+# is a dead site advertising four products that 404. A bare status check would
+# have counted it as a live artifact. That is precisely the failure this Ledger
+# exists to make impossible, so there is deliberately no `http:200` spec.
+# ==============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      entry:
+        description: "Optional single '<url> <spec>' entry to verify instead of the list file"
+        required: false
+        type: string
+  schedule:
+    # Hourly, offset off the top of the hour to avoid the GitHub-wide stampede.
+    - cron: "23 * * * *"
+  push:
+    paths:
+      - ".github/ledger-live-urls.txt"
+      - ".github/workflows/ledger-verify-live.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ledger-verify-live
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Turn the entry list into a matrix. Emits `[]` when there is nothing to check,
+  # which skips the verify job entirely and yields an honest count of 0.
+  #
+  # A malformed line is a HARD FAILURE, not a skip. A typo'd spec that silently
+  # dropped a URL would quietly lower the count while looking like a clean run.
+  # ---------------------------------------------------------------------------
+  discover:
+    name: discover
+    runs-on: ubuntu-latest
+    outputs:
+      entries: ${{ steps.list.outputs.entries }}
+      count: ${{ steps.list.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build verification matrix
+        id: list
+        env:
+          OVERRIDE: ${{ inputs.entry }}
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp)
+
+          if [ -n "${OVERRIDE:-}" ]; then
+            printf '%s\n' "$OVERRIDE" > "$tmp"
+          elif [ -f .github/ledger-live-urls.txt ]; then
+            grep -vE '^[[:space:]]*(#|$)' .github/ledger-live-urls.txt > "$tmp" || true
+          else
+            : > "$tmp"
+          fi
+
+          count=$(grep -c . "$tmp" || true)
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+          if [ "$count" -eq 0 ]; then
+            echo "entries=[]" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Ledger live-artifact verification"
+              echo
+              echo "**0 artifacts to verify.** Nothing is deployed, so the honest value of"
+              echo '`live_artifacts_verified` is **0**.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Validate every line before emitting the matrix.
+          while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            url=${line%% *}
+            spec=${line#* }
+            case "$url" in
+              https://*) ;;
+              *) echo "::error::entry does not start with https:// -> $line"; exit 1 ;;
+            esac
+            if [ "$spec" = "$line" ] || [ -z "$spec" ]; then
+              echo "::error::entry has no assertion spec (need '<url> <spec>') -> $line"
+              exit 1
+            fi
+            case "$spec" in
+              png:[0-9]*x[0-9]*) ;;
+              sha256:[0-9a-f]*)
+                hex=${spec#sha256:}
+                [ ${#hex} -eq 64 ] || { echo "::error::sha256 spec must be 64 hex chars -> $line"; exit 1; } ;;
+              contains:*)
+                needle=${spec#contains:}
+                # >=12 chars so nobody can satisfy a spec with `contains:<html>`.
+                [ ${#needle} -ge 12 ] || { echo "::error::contains: needle must be >=12 chars -> $line"; exit 1; } ;;
+              echo:*)
+                param=${spec#echo:}
+                [ -n "$param" ] || { echo "::error::echo: spec needs a query-param name -> $line"; exit 1; } ;;
+              *) echo "::error::unknown assertion spec '$spec' -> $line"; exit 1 ;;
+            esac
+          done < "$tmp"
+
+          entries=$(jq -R -s -c '
+            split("\n")
+            | map(select(length > 0))
+            | map({url: (. | split(" ") | .[0]),
+                   spec: (. | sub("^[^ ]+ "; ""))})
+          ' < "$tmp")
+          echo "entries=$entries" >> "$GITHUB_OUTPUT"
+          echo "Will verify $count artifact(s): $entries"
+
+  # ---------------------------------------------------------------------------
+  # One job per artifact. Job name starts with `verify` — ledger.sh counts these.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: verify ${{ matrix.entry.url }}
+    needs: discover
+    if: needs.discover.outputs.count != '0'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJSON(needs.discover.outputs.entries) }}
+    steps:
+      - name: Fetch and assert
+        env:
+          TARGET_URL: ${{ matrix.entry.url }}
+          SPEC: ${{ matrix.entry.spec }}
+        run: |
+          set -euo pipefail
+
+          fetch_url="$TARGET_URL"
+          nonce=""
+
+          # `echo:<param>` proves there is COMPUTE behind the URL, not just bytes:
+          # a fresh random nonce is appended as a query parameter and must come
+          # back in the response. A static placeholder cannot satisfy it. The
+          # nonce is generated inside this run, so we cannot precompute a pass.
+          case "$SPEC" in
+            echo:*)
+              param=${SPEC#echo:}
+              nonce="lgr$(date -u +%s)$RANDOM$RANDOM"
+              case "$fetch_url" in
+                *\?*) fetch_url="${fetch_url}&${param}=${nonce}" ;;
+                *)    fetch_url="${fetch_url}?${param}=${nonce}" ;;
+              esac
+              ;;
+          esac
+
+          echo "Target: $fetch_url"
+          echo "Spec:   $SPEC"
+
+          code=$(curl -sS -L --max-time 45 \
+                   -A "Auto-Company-Ledger-Verifier (+github-actions)" \
+                   -D /tmp/headers.txt -o /tmp/artifact.bin \
+                   -w '%{http_code}' "$fetch_url") || {
+            echo "::error::curl failed outright for $fetch_url"
+            exit 1
+          }
+
+          echo "--- response headers ---"
+          cat /tmp/headers.txt
+          echo "------------------------"
+
+          # Every spec requires HTTP 200 first. None is satisfied by 200 alone.
+          if [ "$code" != "200" ]; then
+            echo "::error::HTTP $code (expected 200) for $fetch_url"
+            exit 1
+          fi
+
+          ctype=$(grep -i '^content-type:' /tmp/headers.txt | tail -1 \
+                  | tr -d '\r' | cut -d: -f2- | tr -d ' ')
+          size=$(wc -c < /tmp/artifact.bin | tr -d ' ')
+          detail=""
+
+          case "$SPEC" in
+            png:*)
+              want=${SPEC#png:}
+              want_w=${want%x*}
+              want_h=${want#*x}
+
+              case "$ctype" in
+                image/png*) ;;
+                *) echo "::error::content-type was '$ctype', expected image/png"; exit 1 ;;
+              esac
+
+              # Real PNG bytes, not an HTML error page wearing a PNG content-type.
+              magic=$(od -An -tx1 -N8 /tmp/artifact.bin | tr -d ' \n')
+              if [ "$magic" != "89504e470d0a1a0a" ]; then
+                echo "::error::PNG signature missing (first 8 bytes: $magic)"
+                exit 1
+              fi
+
+              # Dimensions from the IHDR chunk: bytes 0-7 signature, 8-11 length,
+              # 12-15 "IHDR", 16-19 width (BE uint32), 20-23 height (BE uint32).
+              width=$(od -An -tu4 --endian=big -j16 -N4 /tmp/artifact.bin | tr -d ' ')
+              height=$(od -An -tu4 --endian=big -j20 -N4 /tmp/artifact.bin | tr -d ' ')
+              echo "Decoded: ${width}x${height}, ${size} bytes"
+              if [ "$width" != "$want_w" ] || [ "$height" != "$want_h" ]; then
+                echo "::error::dimensions ${width}x${height}, expected ${want_w}x${want_h}"
+                exit 1
+              fi
+              detail="${width}x${height} PNG"
+              ;;
+
+            sha256:*)
+              want=${SPEC#sha256:}
+              got=$(sha256sum /tmp/artifact.bin | cut -d' ' -f1)
+              echo "sha256: $got"
+              if [ "$got" != "$want" ]; then
+                echo "::error::sha256 $got, expected $want"
+                exit 1
+              fi
+              detail="sha256 match"
+              ;;
+
+            contains:*)
+              needle=${SPEC#contains:}
+              if ! grep -qF -- "$needle" /tmp/artifact.bin; then
+                echo "::error::response body does not contain the asserted string"
+                echo "--- first 400 bytes of body ---"
+                head -c 400 /tmp/artifact.bin || true
+                exit 1
+              fi
+              detail="body contains asserted string (${#needle} chars)"
+              ;;
+
+            echo:*)
+              if ! grep -qF -- "$nonce" /tmp/artifact.bin; then
+                echo "::error::response did not echo the nonce $nonce — no live compute behind this URL"
+                echo "--- first 400 bytes of body ---"
+                head -c 400 /tmp/artifact.bin || true
+                exit 1
+              fi
+              detail="echoed run-generated nonce (live compute confirmed)"
+              ;;
+
+            *)
+              echo "::error::unknown assertion spec '$SPEC'"
+              exit 1
+              ;;
+          esac
+
+          file /tmp/artifact.bin || true
+
+          {
+            echo "### Verified live artifact"
+            echo
+            echo "| field | value |"
+            echo "|---|---|"
+            echo "| url | \`$TARGET_URL\` |"
+            echo "| spec | \`$SPEC\` |"
+            echo "| http | $code |"
+            echo "| content-type | \`$ctype\` |"
+            echo "| bytes | $size |"
+            echo "| assertion | $detail |"
+            echo "| verified_at | $(date -u +%Y-%m-%dT%H:%M:%SZ) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "OK — $TARGET_URL satisfies $SPEC."
