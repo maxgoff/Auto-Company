@@ -32,6 +32,67 @@ function AccentBar(color: string): VNode {
   };
 }
 
+/**
+ * Title + description as ONE typographic unit, top-aligned, with all the slack
+ * pushed BELOW them via an explicit spacer.
+ *
+ * `flex: 1` used to sit on the *title* div with the description as its sibling.
+ * Flexbox gave every spare pixel to the title and shoved the description down
+ * against the footer — on a 1200x630 card with a short title that is a ~300px
+ * void with one orphaned grey line under it. The description read as unrelated
+ * boilerplate, not as the title's subtitle.
+ *
+ * Removing `flex: 1` from the title exposed a SECOND, latent bug that the grown
+ * height had been masking: `lineHeight` was written as the string `'1.2'`, and
+ * satori parses that as **1.2 pixels**, not as a 1.2x multiplier. The title's
+ * line box collapsed to ~1px, its glyphs overflowed, and the description
+ * rendered on top of them. Every `lineHeight` in this file is now a bare number
+ * (satori's multiplier form) — see the `quotaExceededElement` styles, which had
+ * always used numbers and had always laid out correctly.
+ *
+ * Layout is therefore: text divs stay DIRECT children of the card's root column
+ * and a zero-content `flex: 1` spacer absorbs the leftover height, so the
+ * title/description pair stays welded to the top and the footer stays pinned to
+ * the bottom. `flexShrink: 0` keeps a long title wrapping rather than being
+ * squeezed by the spacer.
+ */
+function TitleBlock(
+  title: string,
+  description: string | undefined,
+  titleStyle: StyleObject,
+  descriptionStyle: StyleObject
+): VNode[] {
+  return [
+    {
+      type: 'div',
+      props: {
+        style: { display: 'flex', flexShrink: 0, ...titleStyle },
+        children: title,
+      },
+    },
+    ...(description
+      ? [
+          {
+            type: 'div',
+            props: {
+              style: { display: 'flex', flexShrink: 0, ...descriptionStyle },
+              children: description,
+            },
+          },
+        ]
+      : []),
+    // Spacer: eats the remaining height so the footer stays pinned to the bottom
+    // and the title/description pair stays welded to the top.
+    {
+      type: 'div',
+      props: {
+        style: { display: 'flex', flex: '1' },
+        children: null,
+      },
+    },
+  ];
+}
+
 // Header row: domain on left, tag pill on right
 function Header(domain: string | undefined, tag: string | undefined, accent: string, surface: string, primary: string): VNode {
   return {
@@ -52,7 +113,7 @@ function Header(domain: string | undefined, tag: string | undefined, accent: str
                 style: {
                   fontSize: '18px',
                   color: accent,
-                  fontFamily: 'monospace',
+                  fontFamily: '"Noto Sans", sans-serif',
                   letterSpacing: '0.06em',
                   textTransform: 'uppercase',
                 },
@@ -70,7 +131,7 @@ function Header(domain: string | undefined, tag: string | undefined, accent: str
                   backgroundColor: surface,
                   padding: '6px 16px',
                   borderRadius: '100px',
-                  fontFamily: 'monospace',
+                  fontFamily: '"Noto Sans", sans-serif',
                   letterSpacing: '0.04em',
                 },
                 children: tag,
@@ -106,7 +167,7 @@ function Footer(
                 style: {
                   fontSize: '18px',
                   color: secondary,
-                  fontFamily: 'monospace',
+                  fontFamily: '"Noto Sans", sans-serif',
                 },
                 children: `— ${author}`,
               },
@@ -119,7 +180,7 @@ function Footer(
                 style: {
                   fontSize: '14px',
                   color: secondary,
-                  fontFamily: 'monospace',
+                  fontFamily: '"Noto Sans", sans-serif',
                   opacity: '0.55',
                   letterSpacing: '0.06em',
                 },
@@ -161,40 +222,24 @@ function defaultTemplate(params: OGParams, watermark: boolean): VNode {
       children: [
         AccentBar(accent),
         Header(domain, tag, accent, surface, primary),
-        // Title
-        {
-          type: 'div',
-          props: {
-            style: {
-              display: 'flex',
-              flex: '1',
-              fontSize,
-              fontWeight: '700',
-              color: primary,
-              lineHeight: '1.2',
-              letterSpacing: '-0.02em',
-            },
-            children: title,
+        ...TitleBlock(
+          title,
+          description,
+          {
+            fontSize,
+            fontWeight: '700',
+            color: primary,
+            lineHeight: 1.2,
+            letterSpacing: '-0.02em',
           },
-        },
-        // Description
-        ...(description
-          ? [
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    fontSize: '22px',
-                    color: secondary,
-                    marginTop: '24px',
-                    lineHeight: '1.5',
-                    maxWidth: '900px',
-                  },
-                  children: description,
-                },
-              },
-            ]
-          : []),
+          {
+            fontSize: '22px',
+            color: secondary,
+            marginTop: '24px',
+            lineHeight: 1.5,
+            maxWidth: '900px',
+          }
+        ),
         Footer(author, watermark, secondary),
       ],
     },
@@ -245,40 +290,24 @@ function blogTemplate(params: OGParams, watermark: boolean): VNode {
         },
         // Site label + tag
         Header(domain, tag, accent, surface, primary),
-        // Title
-        {
-          type: 'div',
-          props: {
-            style: {
-              display: 'flex',
-              flex: '1',
-              fontSize,
-              fontWeight: '700',
-              color: primary,
-              lineHeight: '1.2',
-              letterSpacing: '-0.01em',
-            },
-            children: title,
+        ...TitleBlock(
+          title,
+          description,
+          {
+            fontSize,
+            fontWeight: '700',
+            color: primary,
+            lineHeight: 1.2,
+            letterSpacing: '-0.01em',
           },
-        },
-        // Description
-        ...(description
-          ? [
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    fontSize: '21px',
-                    color: secondary,
-                    marginTop: '28px',
-                    lineHeight: '1.6',
-                    fontStyle: 'italic',
-                  },
-                  children: description,
-                },
-              },
-            ]
-          : []),
+          {
+            fontSize: '21px',
+            color: secondary,
+            marginTop: '28px',
+            lineHeight: 1.6,
+            fontStyle: 'italic',
+          }
+        ),
         Footer(author, watermark, secondary),
       ],
     },
@@ -335,7 +364,7 @@ function articleTemplate(params: OGParams, watermark: boolean): VNode {
                         color: accent,
                         letterSpacing: '0.12em',
                         textTransform: 'uppercase',
-                        fontFamily: 'monospace',
+                        fontFamily: '"Noto Sans", sans-serif',
                       },
                       children: tag,
                     },
@@ -350,7 +379,7 @@ function articleTemplate(params: OGParams, watermark: boolean): VNode {
                         color: secondary,
                         letterSpacing: '0.08em',
                         textTransform: 'uppercase',
-                        fontFamily: 'monospace',
+                        fontFamily: '"Noto Sans", sans-serif',
                       },
                       children: `• ${domain}`,
                     },
@@ -372,39 +401,24 @@ function articleTemplate(params: OGParams, watermark: boolean): VNode {
             children: null,
           },
         },
-        // Title
-        {
-          type: 'div',
-          props: {
-            style: {
-              display: 'flex',
-              flex: '1',
-              fontSize,
-              fontWeight: '800',
-              color: primary,
-              lineHeight: '1.15',
-              letterSpacing: '-0.025em',
-            },
-            children: title,
+        ...TitleBlock(
+          title,
+          description,
+          {
+            fontSize,
+            fontWeight: '800',
+            color: primary,
+            lineHeight: 1.15,
+            letterSpacing: '-0.025em',
           },
-        },
-        ...(description
-          ? [
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    fontSize: '20px',
-                    color: secondary,
-                    marginTop: '20px',
-                    lineHeight: '1.5',
-                    maxWidth: '850px',
-                  },
-                  children: description,
-                },
-              },
-            ]
-          : []),
+          {
+            fontSize: '20px',
+            color: secondary,
+            marginTop: '20px',
+            lineHeight: 1.5,
+            maxWidth: '850px',
+          }
+        ),
         // Footer divider + meta
         {
           type: 'div',
@@ -426,7 +440,7 @@ function articleTemplate(params: OGParams, watermark: boolean): VNode {
               alignItems: 'center',
               justifyContent: 'space-between',
               marginTop: '16px',
-              fontFamily: 'monospace',
+              fontFamily: '"Noto Sans", sans-serif',
             },
             children: [
               author
@@ -453,6 +467,91 @@ function articleTemplate(params: OGParams, watermark: boolean): VNode {
                   }
                 : { type: 'div', props: { style: { width: '1px' }, children: null } },
             ],
+          },
+        },
+      ],
+    },
+  };
+}
+
+/**
+ * Shown when a key is over its monthly render quota.
+ *
+ * Takes NO parameters on purpose — it must be a single cacheable image, or it
+ * becomes an unmetered render endpoint. It also has to be inoffensive: this ends
+ * up on a paying-soon customer's social cards, so it reads as a neutral system
+ * notice rather than an error, and it tells whoever sees it what to do.
+ */
+export function quotaExceededElement(): VNode {
+  return {
+    type: 'div',
+    props: {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '1200px',
+        height: '630px',
+        backgroundColor: '#0A0A0A',
+        fontFamily: '"Noto Sans", sans-serif',
+        padding: '80px',
+      },
+      children: [
+        {
+          type: 'div',
+          props: {
+            style: {
+              display: 'flex',
+              fontSize: '15px',
+              color: '#F59E0B',
+              letterSpacing: '0.16em',
+              textTransform: 'uppercase',
+              marginBottom: '28px',
+            },
+            children: 'Monthly image limit reached',
+          },
+        },
+        {
+          type: 'div',
+          props: {
+            style: {
+              display: 'flex',
+              fontSize: '54px',
+              fontWeight: '700',
+              color: '#F5F5F5',
+              letterSpacing: '-0.03em',
+              textAlign: 'center',
+              lineHeight: 1.15,
+              marginBottom: '24px',
+            },
+            children: 'This preview image is paused',
+          },
+        },
+        {
+          type: 'div',
+          props: {
+            style: {
+              display: 'flex',
+              fontSize: '22px',
+              color: '#A3A3A3',
+              textAlign: 'center',
+              lineHeight: 1.5,
+            },
+            children: 'The site owner has used their monthly quota. Images resume on the 1st.',
+          },
+        },
+        {
+          type: 'div',
+          props: {
+            style: {
+              display: 'flex',
+              marginTop: '56px',
+              fontSize: '17px',
+              color: '#525252',
+              letterSpacing: '0.08em',
+            },
+            children: 'snapog.dev',
           },
         },
       ],

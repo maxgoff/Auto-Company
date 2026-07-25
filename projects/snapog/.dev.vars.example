@@ -1,0 +1,10 @@
+# Copy to `.dev.vars` for local `wrangler dev`. Never commit `.dev.vars`.
+# In staging/production these are set with `wrangler secret put <NAME>`.
+#
+# Leave any of them blank/absent to exercise the graceful-degradation path:
+# /checkout and /webhooks/stripe return 503 while /og and /register keep working.
+
+STRIPE_SECRET_KEY=sk_test_replace_me
+STRIPE_WEBHOOK_SECRET=whsec_replace_me
+STRIPE_PRICE_PRO=price_replace_me_pro_19_monthly
+STRIPE_PRICE_BUSINESS=price_replace_me_business_49_monthly

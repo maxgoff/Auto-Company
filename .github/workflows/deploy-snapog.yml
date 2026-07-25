@@ -1,0 +1,459 @@
+name: SnapOG — build, deploy, canary
+
+# ─────────────────────────────────────────────────────────────────────────────
+# What this does
+#
+#   push to main   → build gate, then deploy to Cloudflare Workers, then smoke test
+#   pull request   → build gate only (never deploys)
+#   every 15 min   → canary: hit /health + render a real PNG, open an issue if broken
+#   manual         → workflow_dispatch, with a "build only" escape hatch
+#
+# The build gate runs WITHOUT any Cloudflare credentials. It is useful the moment
+# this file lands. The deploy job self-disables until the two repo secrets exist,
+# so nothing red-flags while we are still waiting on a human to paste a token.
+#
+# Required repo secrets (one-time human action — see the runbook):
+#   CLOUDFLARE_API_TOKEN   Workers Scripts:Edit, D1:Edit, R2:Edit, Account Settings:Read
+#   CLOUDFLARE_ACCOUNT_ID  32-hex account id
+#
+# Required repo variable (one-time, set after the first successful deploy):
+#   SNAPOG_BASE_URL        e.g. https://snapog.<your-subdomain>.workers.dev
+#
+# Runbook: docs/devops/2026-07-25-snapog-deploy-runbook.md
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'projects/snapog/**'
+      - '.github/workflows/deploy-snapog.yml'
+  pull_request:
+    paths:
+      - 'projects/snapog/**'
+      - '.github/workflows/deploy-snapog.yml'
+  schedule:
+    # Every 15 minutes. GitHub's scheduler is best-effort and drifts under load;
+    # treat this as "roughly every 15-20 min", which is fine for a $0 canary.
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      build_only:
+        description: 'Run the build gate but skip deploy'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never let two deploys race. Do not cancel a deploy in flight — a half-applied
+  # D1 migration is worse than a slow pipeline.
+  group: snapog-${{ github.event_name == 'schedule' && 'canary' || 'deploy' }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+    working-directory: projects/snapog
+
+env:
+  # Keep wrangler quiet and non-interactive.
+  WRANGLER_SEND_METRICS: 'false'
+  CI: 'true'
+  # Fail the build below this much gzip headroom. Workers limit is 3 MiB gzip on
+  # the Free plan / 10 MiB on Paid. 2500 KiB leaves room for resvg-wasm to grow.
+  MAX_GZIP_KIB: '2500'
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # 1. BUILD GATE — no credentials needed, always runs
+  # ───────────────────────────────────────────────────────────────────────────
+  build:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      deployable: ${{ steps.creds.outputs.deployable }}
+      gzip_kib: ${{ steps.size.outputs.gzip_kib }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: projects/snapog/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build (dry run — no deploy, no credentials)
+        run: |
+          set -o pipefail
+          # Same flags the deploy job uses, so this gate tests what actually ships.
+          npx wrangler deploy --env production --dry-run --outdir dist 2>&1 | tee /tmp/build.log
+          cat /tmp/build.log
+
+      - name: Guard — bindings must resolve to real resources
+        run: |
+          # Ask wrangler what the bindings are rather than hand-parsing TOML. This
+          # catches both a placeholder database_id and the non-inheritable-bindings
+          # trap (d1_databases / r2_buckets / vars do NOT inherit into [env.*];
+          # a named env missing them deploys a Worker with zero storage that 500s
+          # on the first request to /og, /register, /dashboard, /webhooks/stripe).
+
+          if grep -q 'is not inherited by environments' /tmp/build.log; then
+            echo "::error file=projects/snapog/wrangler.toml::[env.production] is missing bindings that do not inherit. Repeat [[d1_databases]] and [[r2_buckets]] under [env.production]."
+            exit 1
+          fi
+
+          db_id=$(grep -oE 'DB: [^ ]+ \(([^)]+)\)' /tmp/build.log | sed -E 's/.*\((.*)\)/\1/' | head -1)
+          if [ -z "$db_id" ]; then
+            echo "::error::No D1 binding named DB in the resolved config."
+            exit 1
+          fi
+          if ! printf '%s' "$db_id" | grep -qiE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'; then
+            echo "::error file=projects/snapog/wrangler.toml::database_id is not a real UUID (got '$db_id'). Run 'npx wrangler d1 create snapog-db' and paste the id. See docs/devops/2026-07-25-snapog-deploy-runbook.md §3.1."
+            exit 1
+          fi
+          echo "D1 database_id resolves to a real UUID."
+
+          grep -q 'OG_CACHE:' /tmp/build.log \
+            || { echo "::error::No R2 binding named OG_CACHE in the resolved config."; exit 1; }
+          echo "R2 binding OG_CACHE present."
+
+      - name: Check the staging environment too (warn only)
+        continue-on-error: true
+        run: |
+          npx wrangler deploy --env staging --dry-run --outdir /tmp/dry-staging 2>&1 | tee /tmp/staging.log
+          if grep -q 'is not inherited by environments' /tmp/staging.log; then
+            echo "::warning file=projects/snapog/wrangler.toml::[env.staging] is missing non-inheritable bindings."
+          fi
+
+      - name: Bundle size gate
+        id: size
+        run: |
+          # wrangler prints: "Total Upload: 2104.67 KiB / gzip: 720.58 KiB"
+          raw=$(grep -oE 'Total Upload: [0-9.]+ KiB'      /tmp/build.log | grep -oE '[0-9.]+' | head -1)
+          gz=$( grep -oE 'gzip: [0-9.]+ KiB'              /tmp/build.log | grep -oE '[0-9.]+' | head -1)
+          if [ -z "$gz" ]; then
+            echo "::error::Could not parse bundle size from wrangler output."
+            exit 1
+          fi
+          echo "gzip_kib=$gz" >> "$GITHUB_OUTPUT"
+          {
+            echo "### SnapOG bundle"
+            echo ""
+            echo "| metric | value | limit |"
+            echo "|---|---|---|"
+            echo "| raw | ${raw} KiB | — |"
+            echo "| gzip | ${gz} KiB | 3072 KiB (Free) / 10240 KiB (Paid) |"
+            echo ""
+            printf '%s\n' "Largest artifacts:"
+            echo '```'
+            du -h dist/* 2>/dev/null | sort -rh | head -5
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          awk -v g="$gz" -v m="$MAX_GZIP_KIB" 'BEGIN{
+            if (g+0 > m+0) { printf "::error::gzip bundle %s KiB exceeds gate of %s KiB\n", g, m; exit 1 }
+            printf "gzip %s KiB — under the %s KiB gate.\n", g, m
+          }'
+
+      - name: Detect Cloudflare credentials
+        id: creds
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          # The `secrets` context is not available in job-level `if:`, so we launder
+          # it through a step output. Values are never printed.
+          if [ -n "$CF_TOKEN" ] && [ -n "$CF_ACCOUNT" ]; then
+            echo "deployable=true" >> "$GITHUB_OUTPUT"
+            echo "Cloudflare credentials present."
+          else
+            echo "deployable=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not set — deploy will be skipped. Build gate still passed."
+            echo "Set them with: gh secret set CLOUDFLARE_API_TOKEN" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 2. DEPLOY — main only, self-disables without secrets
+  # ───────────────────────────────────────────────────────────────────────────
+  deploy:
+    needs: build
+    if: >-
+      needs.build.outputs.deployable == 'true' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request' &&
+      github.event_name != 'schedule' &&
+      inputs.build_only != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Deliberately NO `environment:` key. A GitHub Environment is one checkbox away
+    # from "required reviewers", which would put a human back in the deploy path.
+    # The whole point of this file is that there is no human in the deploy path.
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    outputs:
+      base_url: ${{ steps.deploy.outputs.base_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: projects/snapog/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Who am I
+        run: npx wrangler whoami
+
+      - name: Record pre-deploy version (for rollback)
+        id: prev
+        run: |
+          # Capture the currently-live version id BEFORE we touch anything, so a
+          # rollback does not require guessing. Tolerate failure on first deploy.
+          npx wrangler deployments list --env production 2>&1 | tee /tmp/prev.log || true
+          prev=$(grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' /tmp/prev.log | head -1 || true)
+          echo "prev_version=$prev" >> "$GITHUB_OUTPUT"
+          if [ -n "$prev" ]; then
+            echo "Rollback target: npx wrangler rollback $prev" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No prior deployment found (first deploy)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Apply D1 migrations (remote)
+        run: |
+          # Idempotent: wrangler's d1_migrations table makes each file run once.
+          # --remote is mandatory; without it this silently migrates a local sqlite.
+          npx wrangler d1 migrations apply snapog-db --remote < /dev/null
+
+      - name: Deploy
+        id: deploy
+        run: |
+          set -o pipefail
+          # --env production: wrangler.toml declares D1 + R2 + vars under
+          # [env.production] (verified), and env.production.name == "snapog", the
+          # same script name as top-level, so secrets set with no --env still apply.
+          npx wrangler deploy --env production 2>&1 | tee /tmp/deploy.log
+          url=$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' /tmp/deploy.log | head -1 || true)
+          if [ -z "$url" ]; then
+            url="${{ vars.SNAPOG_BASE_URL }}"
+          fi
+          if [ -z "$url" ]; then
+            echo "::error::Could not determine the deployed URL. Set the SNAPOG_BASE_URL repo variable."
+            exit 1
+          fi
+          echo "base_url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployed: $url" >> "$GITHUB_STEP_SUMMARY"
+          echo "If SNAPOG_BASE_URL is unset, run: gh variable set SNAPOG_BASE_URL --body '$url'" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Smoke test — /health
+        run: |
+          url="${{ steps.deploy.outputs.base_url }}"
+          # Cold-start + global propagation: retry rather than fail on the first miss.
+          for i in 1 2 3 4 5; do
+            code=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 20 "$url/health" || echo 000)
+            [ "$code" = "200" ] && break
+            echo "attempt $i: HTTP $code — retrying"; sleep 5
+          done
+          [ "$code" = "200" ] || { echo "::error::/health returned $code"; cat /tmp/health.json || true; exit 1; }
+          cat /tmp/health.json
+          ok=$(jq -r '.ok' /tmp/health.json)
+          [ "$ok" = "true" ] || { echo "::error::/health ok != true"; exit 1; }
+          billing=$(jq -r '.billing' /tmp/health.json)
+          webhook=$(jq -r '.webhook' /tmp/health.json)
+          echo "billing=$billing webhook=$webhook"
+          if [ "$billing" != "configured" ] || [ "$webhook" != "configured" ]; then
+            echo "::warning::Stripe is not fully configured (billing=$billing webhook=$webhook). Revenue paths are dead until 'wrangler secret put' is done. See the runbook."
+          fi
+
+      - name: Smoke test — /og renders a real PNG
+        id: og
+        run: |
+          url="${{ steps.deploy.outputs.base_url }}"
+          # Seed a throwaway free-tier key straight into production D1. Values are
+          # locally generated hex, so there is nothing to inject. Cleaned up below.
+          RAW="sk_$(openssl rand -hex 32)"
+          HASH=$(printf '%s' "$RAW" | openssl dgst -sha256 | awk '{print $NF}')
+          PREFIX=$(printf '%s' "$RAW" | cut -c1-12)
+          UID_="ci-$(openssl rand -hex 8)"
+          KID="ci-$(openssl rand -hex 8)"
+          EMAIL="ci-smoke-${GITHUB_RUN_ID}@snapog.invalid"
+          RESET=$(date -u +%Y-%m-01T00:00:00.000Z)
+          echo "uid=$UID_" >> "$GITHUB_OUTPUT"
+          echo "kid=$KID"  >> "$GITHUB_OUTPUT"
+
+          npx wrangler d1 execute snapog-db --remote --yes --command \
+            "INSERT INTO users (id,email) VALUES ('$UID_','$EMAIL');
+             INSERT INTO api_keys (id,user_id,name,key_prefix,key_hash,tier,monthly_limit,usage_reset_at)
+             VALUES ('$KID','$UID_','ci-smoke','$PREFIX','$HASH','free',100,'$RESET');"
+
+          TITLE="CI+smoke+${GITHUB_RUN_ID}"
+          OGURL="$url/og?title=$TITLE&description=deploy+verification&domain=snapog.dev&key=$RAW"
+
+          # Pass 1: must be a cache MISS, i.e. it really re-rendered.
+          code=$(curl -sS -D /tmp/h1 -o /tmp/og1.png -w '%{http_code}' --max-time 45 "$OGURL" || echo 000)
+          echo "HTTP $code"; grep -iE '^(content-type|x-cache|x-snapog-tier):' /tmp/h1 || true
+          [ "$code" = "200" ] || { echo "::error::/og returned $code"; head -c 400 /tmp/og1.png; exit 1; }
+
+          grep -qi '^content-type: *image/png' /tmp/h1 \
+            || { echo "::error::/og did not return image/png"; exit 1; }
+
+          magic=$(head -c 8 /tmp/og1.png | od -An -tx1 | tr -d ' \n')
+          [ "$magic" = "89504e470d0a1a0a" ] \
+            || { echo "::error::/og body is not a PNG (magic=$magic)"; exit 1; }
+
+          size=$(wc -c < /tmp/og1.png)
+          echo "PNG: $size bytes"
+          [ "$size" -gt 5000 ] || { echo "::error::PNG is only $size bytes — renderer is probably returning a blank"; exit 1; }
+
+          # Pass 2: the R2 write is fire-and-forget via waitUntil, so a HIT proves
+          # the cache path works but can legitimately race. Warn, never fail.
+          sleep 5
+          curl -sS -D /tmp/h2 -o /tmp/og2.png --max-time 45 "$OGURL" >/dev/null || true
+          if grep -qi '^x-cache: *HIT' /tmp/h2; then
+            echo "R2 cache verified (second request was a HIT)."
+          else
+            echo "::warning::Second /og request was not a cache HIT — check the R2 binding and waitUntil path."
+          fi
+
+          {
+            echo "### Smoke test"
+            echo ""
+            echo "- \`/health\` 200, ok=true"
+            echo "- \`/og\` 200, image/png, ${size} bytes, PNG magic verified"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean up smoke-test rows
+        if: always()
+        run: |
+          uid='${{ steps.og.outputs.uid }}'
+          kid='${{ steps.og.outputs.kid }}'
+          [ -n "$kid" ] || exit 0
+          npx wrangler d1 execute snapog-db --remote --yes --command \
+            "DELETE FROM usage_events WHERE api_key_id='$kid';
+             DELETE FROM api_keys    WHERE id='$kid';
+             DELETE FROM users       WHERE id='$uid';" || \
+            echo "::warning::Smoke-test row cleanup failed — remove api_keys.id='$kid' by hand."
+
+      - name: Roll back on smoke-test failure
+        if: failure() && steps.deploy.outcome == 'success' && steps.prev.outputs.prev_version != ''
+        run: |
+          echo "::warning::Smoke test failed after a successful deploy — rolling back."
+          npx wrangler rollback "${{ steps.prev.outputs.prev_version }}" --env production \
+            --yes --message "auto-rollback: smoke test failed on ${GITHUB_SHA}" || {
+            echo "::error::Automatic rollback failed. Run manually: npx wrangler rollback ${{ steps.prev.outputs.prev_version }}"
+            exit 1
+          }
+          echo "Rolled back to ${{ steps.prev.outputs.prev_version }}"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 3. CANARY — the one alert. $0, no vendor.
+  # ───────────────────────────────────────────────────────────────────────────
+  canary:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Probe
+        id: probe
+        env:
+          BASE_URL: ${{ vars.SNAPOG_BASE_URL }}
+          CANARY_KEY: ${{ secrets.SNAPOG_CANARY_KEY }}
+        run: |
+          if [ -z "$BASE_URL" ]; then
+            echo "::notice::SNAPOG_BASE_URL is not set — nothing deployed yet. Skipping canary."
+            echo "status=skip" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+
+          fails=""
+
+          # (1) Is the API up at all?
+          code=$(curl -sS -o /tmp/h.json -w '%{http_code}' --max-time 20 "$BASE_URL/health" || echo 000)
+          if [ "$code" != "200" ] || [ "$(jq -r '.ok' /tmp/h.json 2>/dev/null)" != "true" ]; then
+            fails="${fails}- \`/health\` returned HTTP ${code}\n"
+          fi
+
+          # (2) Are renders actually working? Needs a long-lived free-tier key
+          #     stored as the SNAPOG_CANARY_KEY secret. Without it we only get
+          #     liveness, which misses the most likely failure (resvg/satori dying).
+          if [ -n "$CANARY_KEY" ]; then
+            u="$BASE_URL/og?title=canary&domain=snapog.dev&key=$CANARY_KEY"
+            c=$(curl -sS -D /tmp/hh -o /tmp/c.png -w '%{http_code}' --max-time 45 "$u" || echo 000)
+            magic=$(head -c 8 /tmp/c.png 2>/dev/null | od -An -tx1 | tr -d ' \n')
+            sz=$(wc -c < /tmp/c.png 2>/dev/null || echo 0)
+            if [ "$c" != "200" ]; then
+              fails="${fails}- \`/og\` returned HTTP ${c}: $(head -c 200 /tmp/c.png | tr -d '\n')\n"
+            elif [ "$magic" != "89504e470d0a1a0a" ]; then
+              fails="${fails}- \`/og\` returned 200 but the body is not a PNG (magic=${magic}, ${sz} bytes)\n"
+            fi
+          else
+            echo "::notice::SNAPOG_CANARY_KEY not set — only checking liveness, not renders."
+          fi
+
+          if [ -n "$fails" ]; then
+            printf '%b' "$fails" > /tmp/fails.md
+            cat /tmp/fails.md
+            echo "status=fail" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "status=ok" >> "$GITHUB_OUTPUT"
+          echo "SnapOG healthy."
+
+      - name: Open or update the alert issue
+        if: failure() && steps.probe.outputs.status == 'fail'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: .
+        env:
+          BASE_URL: ${{ vars.SNAPOG_BASE_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "## SnapOG canary failed"
+            echo
+            cat /tmp/fails.md 2>/dev/null || echo "- canary failed (no detail captured)"
+            echo
+            echo "Base URL: ${BASE_URL}"
+            echo "Run: ${RUN_URL}"
+            echo "Detected: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo
+            echo "### Triage (recover first, diagnose second)"
+            echo '1. `npx wrangler tail snapog --format pretty` — watch live errors'
+            echo '2. `npx wrangler deployments list` then `npx wrangler rollback <id>`'
+            echo '3. Post-mortem in `docs/devops/` once service is restored'
+          } > /tmp/issue.md
+          cat /tmp/issue.md
+
+          existing=$(gh issue list --label snapog-canary --state open --limit 1 --json number -q '.[0].number' || true)
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file /tmp/issue.md
+          else
+            gh label create snapog-canary --color B60205 --description "SnapOG production canary" 2>/dev/null || true
+            gh issue create --title "SnapOG canary failing — production may be down" \
+                            --label snapog-canary --body-file /tmp/issue.md
+          fi
+
+      - name: Close the alert issue once healthy
+        if: success() && steps.probe.outputs.status == 'ok'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: .
+        run: |
+          n=$(gh issue list --label snapog-canary --state open --limit 1 --json number -q '.[0].number' || true)
+          if [ -n "$n" ]; then
+            gh issue comment "$n" --body "Canary recovered at $(date -u +%Y-%m-%dT%H:%M:%SZ). Closing."
+            gh issue close "$n"
+          fi

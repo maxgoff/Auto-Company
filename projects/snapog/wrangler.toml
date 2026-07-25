@@ -3,10 +3,36 @@ main = "src/index.ts"
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
 
+# ─── Secrets (NOT set here — never commit these) ───────────────────────────────
+# Set each one per-environment before the first paid customer:
+#
+#   npx wrangler secret put STRIPE_SECRET_KEY      # sk_live_... / sk_test_...
+#   npx wrangler secret put STRIPE_WEBHOOK_SECRET  # whsec_... from the Stripe
+#                                                  # webhook endpoint you create
+#                                                  # for POST /webhooks/stripe
+#   npx wrangler secret put STRIPE_PRICE_PRO       # price_... ($19/mo recurring)
+#   npx wrangler secret put STRIPE_PRICE_BUSINESS  # price_... ($49/mo recurring)
+#
+# (add `--env staging` / `--env production` to target a named environment)
+#
+# The Worker degrades gracefully when these are absent: /checkout returns 503
+# "billing not configured", /webhooks/stripe returns 503, and /og /register
+# /dashboard keep working. GET /health reports billing configured|not_configured.
+
+# ─── D1 ────────────────────────────────────────────────────────────────────────
+# TODO(deploy-blocker): this id is NOT real. Create the database and paste the
+# id printed by:
+#
+#   npx wrangler d1 create snapog-db
+#
+# Left as an obviously-invalid string on purpose: `wrangler deploy` fails loudly
+# with "Couldn't find DB '...'" rather than silently binding the wrong database.
+# Local dev (`wrangler dev --local`) and `wrangler d1 ... --local` work fine with
+# this placeholder — miniflare only uses it as a local file name.
 [[d1_databases]]
 binding = "DB"
 database_name = "snapog-db"
-database_id = "placeholder-set-after-wrangler-d1-create"
+database_id = "TODO-REPLACE-run-wrangler-d1-create-snapog-db"
 
 [[r2_buckets]]
 binding = "OG_CACHE"
@@ -14,14 +40,59 @@ bucket_name = "snapog-og-cache"
 
 [vars]
 ENVIRONMENT = "development"
-# Set AUTH_SECRET via `wrangler secret put AUTH_SECRET` for dashboard cookie signing
+
+# ─── Fonts are bundled, not fetched ────────────────────────────────────────────
+# Latin-subset Noto TTFs are imported directly by src/og/render.ts and inlined
+# as binary modules. Without this rule esbuild has no loader for .ttf and the
+# build fails. See scripts/gen-fonts.sh for how the subsets were produced.
+[[rules]]
+type = "Data"
+globs = ["**/*.ttf"]
+fallthrough = true
+
+# ─── Workers Logs ──────────────────────────────────────────────────────────────
+# Structured, searchable, retained logs in the dashboard. Without this the only
+# way to see a production error is to already be running `wrangler tail`.
+# /og emits one JSON line per response (evt:"og") — never the raw key or hash.
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+# ─── Named environments ────────────────────────────────────────────────────────
+# IMPORTANT: d1_databases, r2_buckets and vars are NOT inherited by named
+# environments in Wrangler. Every environment must repeat every binding or it
+# deploys with none of them — which would 500 on the first request to /og,
+# /register, /dashboard and /webhooks/stripe.
 
 [env.staging]
 name = "snapog-staging"
+
 [env.staging.vars]
 ENVIRONMENT = "staging"
 
+# Staging gets its OWN database and bucket so test payments and test webhooks
+# can never touch production billing rows.
+#   npx wrangler d1 create snapog-db-staging
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "snapog-db-staging"
+database_id = "TODO-REPLACE-run-wrangler-d1-create-snapog-db-staging"
+
+[[env.staging.r2_buckets]]
+binding = "OG_CACHE"
+bucket_name = "snapog-og-cache-staging"
+
 [env.production]
 name = "snapog"
+
 [env.production.vars]
 ENVIRONMENT = "production"
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "snapog-db"
+database_id = "TODO-REPLACE-run-wrangler-d1-create-snapog-db"
+
+[[env.production.r2_buckets]]
+binding = "OG_CACHE"
+bucket_name = "snapog-og-cache"
