@@ -31,9 +31,23 @@ name: Ledger — verify live artifact
 #
 # The rule that did NOT change, and must not: a spec has to be something a
 # BROKEN OR PLACEHOLDER deploy would FAIL. `www.snapog.dev` returns HTTP 200 and
-# is a dead site advertising four products that 404. A bare status check would
-# have counted it as a live artifact. That is precisely the failure this Ledger
-# exists to make impossible, so there is deliberately no `http:200` spec.
+# is a dead site serving a whole storefront — /docs, /mcp, /dashboard, /login all
+# 200 — for an API that 404s on every path. A bare status check would have
+# counted it as a live artifact. That is precisely the failure this Ledger exists
+# to make impossible, so there is deliberately no `http:200` spec.
+#
+# ------------------------------------------------------------------------------
+# PROVEN 2026-07-25, both directions, on this workflow, on real GitHub runners,
+# against a real third-party endpoint. A verifier only ever tested against things
+# that pass is not evidence of anything:
+#
+#   echo:probe                                      -> run 30165401084  success
+#     (nonce minted inside the run; a static page cannot round-trip it)
+#   contains:ThisStringIsDefinitelyNotInTheResponse -> run 30165406898  FAILURE
+#     (the important one: it refuses to certify a claim that is not true)
+#
+# Both jobs rendered as `verify <url>`, so `ledger.sh`'s `startswith("verify")`
+# count stays correct: 1 and 0 respectively.
 # ==============================================================================
 
 on:
