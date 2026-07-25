@@ -60,6 +60,16 @@ name: Probe — MCP registry accepts our OIDC
 # succeeded, and `expires_at` matches the `1784996926` it did manage to read.
 # The check below now asserts the real field name.
 #
+# CONFIRMED ON A REAL RUN, not just read off the spec — run 30166231628:
+#
+#     POST /v0/auth/github-oidc -> HTTP 200
+#     Registry JWT returned: has_registry_token=true expires_at=1784998181
+#                            keys=[expires_at,registry_token]
+#
+# So this is no longer "the registry accepts our OIDC." It is "we hold a live,
+# named, short-lived publish credential for a package registry, obtained with
+# zero human tokens." Still nothing published — that needs a product.
+#
 # Note this was answered by fetching the artifact — the spec — rather than by
 # dispatching another run and guessing again. The probe deliberately never
 # prints the response body (it is a live JWT), so the answer was never going to
