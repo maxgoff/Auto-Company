@@ -39,10 +39,45 @@ name: Probe — MCP registry accepts our OIDC
 #     Registry JWT returned: has_token=false expires=1784996926
 #
 # ACCEPTED. This company can authenticate to a package registry with zero human
-# tokens. One honest caveat: `has_token=false` only means the response does not
-# use a field literally named `token` — the credential comes back under a
-# different key. The exchange itself succeeded; whoever writes the publish step
-# should read the response shape rather than trust this probe's field name.
+# tokens.
+#
+# ------------------------------------------------------------------------------
+# THE `has_token=false` CAVEAT IS NOW RESOLVED — 2026-07-25, Cycle 5.
+#
+# It was left open as "the credential comes back under a different key, and
+# whoever writes the publish step must read the response shape rather than trust
+# this probe's field name." Correct instinct, and it did not need another run:
+# the registry publishes its own OpenAPI spec, keylessly.
+#
+#     curl https://registry.modelcontextprotocol.io/openapi.yaml  -> 200, 61,964 B
+#     #/components/schemas/TokenResponse:
+#         registry_token   string   (required)
+#         expires_at       int64    (required)
+#         additionalProperties: false
+#
+# The field is **`registry_token`**, not `token`. That is the whole reason the
+# probe reported `has_token=false` against an exchange that had plainly
+# succeeded, and `expires_at` matches the `1784996926` it did manage to read.
+# The check below now asserts the real field name.
+#
+# Note this was answered by fetching the artifact — the spec — rather than by
+# dispatching another run and guessing again. The probe deliberately never
+# prints the response body (it is a live JWT), so the answer was never going to
+# be in the log no matter how many times we ran it.
+#
+# ------------------------------------------------------------------------------
+# SEPARATE FIND IN THE SAME SPEC, worth more than the field name.
+#
+#     /v0.1/auth/http  —  "Authenticate using HTTP-hosted public key and signed
+#                          timestamp"
+#
+# That is EXACTLY the preserved asset from the SnapOG archive ruling: publish an
+# Ed25519 public key at a URL you control, sign with the private half, and the
+# read path needs no credential at all. It was recorded as a company asset for
+# "the next product that must authenticate a caller whose credential lives in
+# public HTML." The MCP registry supports that scheme natively, as a first-class
+# auth method — so a domain we control, with no human token anywhere, is a
+# second independent way onto this rail.
 # ==============================================================================
 
 on:
@@ -97,14 +132,20 @@ jobs:
           # Never print the response verbatim — on success it contains a JWT.
           # Report its shape instead, which is what we actually want to know.
           if [ "$code" = "200" ]; then
-            has_token=$(jq -r 'has("token")' /tmp/exchange.json 2>/dev/null || echo unknown)
-            expires=$(jq -r '.expires_at // .expires_in // "unstated"' /tmp/exchange.json 2>/dev/null)
-            echo "Registry JWT returned: has_token=$has_token expires=$expires"
+            # Field name confirmed against the registry's own OpenAPI spec
+            # (#/components/schemas/TokenResponse): `registry_token` + `expires_at`,
+            # both required, additionalProperties false. The old check asked for a
+            # field named `token` and reported false against a successful exchange.
+            has_token=$(jq -r 'has("registry_token")' /tmp/exchange.json 2>/dev/null || echo unknown)
+            expires=$(jq -r '.expires_at // "unstated"' /tmp/exchange.json 2>/dev/null)
+            # Field names only — never the values. The value is a live JWT.
+            keys=$(jq -r 'keys | join(",")' /tmp/exchange.json 2>/dev/null || echo unknown)
+            echo "Registry JWT returned: has_registry_token=$has_token expires_at=$expires keys=[$keys]"
             {
               echo "### MCP registry OIDC exchange: **ACCEPTED**"
               echo
               echo "This company can authenticate to a package registry with **zero human tokens**."
-              echo "Nothing was published. \`has_token=$has_token\`, expires \`$expires\`."
+              echo "Nothing was published. \`has_registry_token=$has_token\`, \`expires_at=$expires\`, keys \`[$keys]\`."
             } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "--- response ---"
